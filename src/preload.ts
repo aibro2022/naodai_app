@@ -9,6 +9,7 @@ import {
 const api: NaodaiApi = {
   ping: (message) => ipcRenderer.invoke(IpcChannels.ping, message),
   getAppInfo: () => ipcRenderer.invoke(IpcChannels.getAppInfo),
+  getSystemInfo: () => ipcRenderer.invoke(IpcChannels.getSystemInfo),
   onPush: (listener) => {
     const handler = (_event: IpcRendererEvent, payload: PushPayload) => {
       listener(payload);

@@ -28,6 +28,7 @@ Electron desktop app scaffolded with Electron Forge's `vite-typescript` template
 - `src/preload.ts` — exposes `window.api` via `contextBridge` (typed `NaodaiApi`)
 - `src/env.d.ts` — declares `window.api` for the renderer
 - `src/lib/utils.ts` — `cn()` helper
+- `src/main.ts` also uses `systeminformation` (`getSystemInfo` handler) to report GPU model/VRAM, CPU model, and memory size.
 - `src/components/ui/` — shadcn/ui components
 - `vite.main.config.ts`, `vite.preload.config.ts`, `vite.renderer.config.mts` — Vite configs
 
