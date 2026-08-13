@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain } from 'electron';
+import { app, BrowserWindow, ipcMain, Tray, Menu, nativeImage } from 'electron';
 import path from 'node:path';
 import started from 'electron-squirrel-startup';
 import { IpcChannels } from './ipc';
@@ -7,6 +7,10 @@ import { IpcChannels } from './ipc';
 if (started) {
   app.quit();
 }
+
+let mainWindow: BrowserWindow | null = null;
+let tray: Tray | null = null;
+let isQuitting = false;
 
 ipcMain.handle(IpcChannels.ping, (_event, message: string) => {
   return `pong: ${message}`;
@@ -21,14 +25,83 @@ ipcMain.handle(IpcChannels.getAppInfo, () => {
   };
 });
 
+const createTrayIcon = () => {
+  const size = 32;
+  const buffer = Buffer.alloc(size * size * 4);
+  const cx = size / 2;
+  const cy = size / 2;
+  const radius = 12;
+  for (let y = 0; y < size; y++) {
+    for (let x = 0; x < size; x++) {
+      const dist = Math.sqrt((x - cx) ** 2 + (y - cy) ** 2);
+      const idx = (y * size + x) * 4;
+      if (dist <= radius) {
+        // BGRA: orange circle with a darker edge.
+        const shade = Math.max(0, 1 - dist / radius);
+        buffer[idx] = 60 + shade * 120; // B
+        buffer[idx + 1] = 90 + shade * 70; // G
+        buffer[idx + 2] = 230; // R
+        buffer[idx + 3] = 245; // A
+      } else {
+        buffer[idx + 3] = 0;
+      }
+    }
+  }
+  return nativeImage.createFromBitmap(buffer, { width: size, height: size });
+};
+
+const showWindow = () => {
+  if (!mainWindow || mainWindow.isDestroyed()) {
+    createWindow();
+    return;
+  }
+  if (mainWindow.isMinimized()) {
+    mainWindow.restore();
+  }
+  mainWindow.show();
+  mainWindow.focus();
+};
+
+const createTray = () => {
+  tray = new Tray(createTrayIcon());
+  tray.setToolTip('naodai');
+  tray.setContextMenu(
+    Menu.buildFromTemplate([
+      {
+        label: '打开',
+        click: () => showWindow(),
+      },
+      { type: 'separator' },
+      {
+        label: '关闭',
+        click: () => {
+          isQuitting = true;
+          app.quit();
+        },
+      },
+    ]),
+  );
+  tray.on('click', () => showWindow());
+};
+
 const createWindow = () => {
   // Create the browser window.
-  const mainWindow = new BrowserWindow({
+  mainWindow = new BrowserWindow({
     width: 800,
     height: 600,
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
     },
+  });
+
+  // Closing the window hides it instead of quitting the app.
+  // Only the tray "关闭" item truly quits the application.
+  mainWindow.on('close', (event) => {
+    if (isQuitting) {
+      return;
+    }
+    event.preventDefault();
+    mainWindow?.hide();
   });
 
   // Send a heartbeat from the main process to the renderer every 5 seconds,
@@ -58,16 +131,20 @@ const createWindow = () => {
 
   // Open the DevTools.
   mainWindow.webContents.openDevTools();
+
+  mainWindow.on('closed', () => {
+    mainWindow = null;
+  });
 };
 
 // This method will be called when Electron has finished
 // initialization and is ready to create browser windows.
 // Some APIs can only be used after this event occurs.
-app.on('ready', createWindow);
+app.on('ready', () => {
+  createTray();
+  createWindow();
+});
 
-// Quit when all windows are closed, except on macOS. There, it's common
-// for applications and their menu bar to stay active until the user quits
-// explicitly with Cmd + Q.
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') {
     app.quit();
@@ -75,12 +152,5 @@ app.on('window-all-closed', () => {
 });
 
 app.on('activate', () => {
-  // On OS X it's common to re-create a window in the app when the
-  // dock icon is clicked and there are no other windows open.
-  if (BrowserWindow.getAllWindows().length === 0) {
-    createWindow();
-  }
+  showWindow();
 });
-
-// In this file you can include the rest of your app's specific main process
-// code. You can also put them in separate files and import them here.

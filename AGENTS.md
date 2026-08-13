@@ -36,3 +36,10 @@ Electron desktop app scaffolded with Electron Forge's `vite-typescript` template
 - `vite.renderer.config.mts` is ESM (`.mts`) because Forge bundles the config as CJS by default and `@tailwindcss/vite` is ESM-only. Keep the renderer config as `.mts`.
 - Path alias `@/*` → `src/*` is configured in both `vite.renderer.config.mts` and `tsconfig.json`.
 - The host system's npm version check in Electron Forge can fail (`Could not check npm version "undefined"`) because npm resolves to an nvm shim. `~/.skip-forge-system-check` bypasses this.
+
+## Window / Tray behavior
+
+- Closing the window (X) only hides it; the app keeps running in the system tray.
+- Only the tray menu item "关闭" truly quits the app (sets `isQuitting` before `app.quit()`).
+- The tray "打开" (or clicking the tray icon) restores and focuses the window.
+- The tray icon is generated at runtime in `src/main.ts` (`createTrayIcon`), so no image assets are needed.
