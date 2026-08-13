@@ -2,6 +2,7 @@ import { app, BrowserWindow, ipcMain, Tray, Menu, nativeImage } from 'electron';
 import path from 'node:path';
 import started from 'electron-squirrel-startup';
 import { graphics, cpu, mem } from 'systeminformation';
+import { arch } from 'node:os';
 import { IpcChannels } from './ipc';
 
 // Handle creating/removing shortcuts on Windows when installing/uninstalling.
@@ -38,6 +39,12 @@ ipcMain.handle(IpcChannels.getSystemInfo, async () => {
       model: controller.model,
       vram: controller.vram,
     })),
+    gpuVendor: graphicsData.controllers[0]?.vendor ?? '',
+    gpuVram: graphicsData.controllers.reduce(
+      (sum, item) => sum + (item.vram ?? 0),
+      0,
+    ),
+    osArch: arch(),
     cpuModel: cpuData.manufacturer
       ? `${cpuData.manufacturer} ${cpuData.brand}`.trim()
       : cpuData.brand,

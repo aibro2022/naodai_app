@@ -95,6 +95,18 @@ const App: React.FC = () => {
                 <li className="text-muted-foreground">no GPU detected</li>
               )}
             </ul>
+            <div>
+              <span className="font-medium text-muted-foreground">
+                GPU Vendor:{" "}
+              </span>
+              {systemInfo.gpuVendor}
+            </div>
+            <div>
+              <span className="font-medium text-muted-foreground">
+                OS Arch:{" "}
+              </span>
+              {systemInfo.osArch}
+            </div>
           </div>
         )}
         <div className="rounded-md border border-border p-4">

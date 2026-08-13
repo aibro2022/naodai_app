@@ -23,6 +23,9 @@ export interface SystemInfo {
   cpuModel: string;
   cpuCores: number;
   memoryTotal: number;
+  gpuVendor: string;
+  gpuVram: number;
+  osArch: string;
 }
 
 export interface PushPayload {
