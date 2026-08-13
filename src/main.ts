@@ -1,11 +1,25 @@
-import { app, BrowserWindow } from 'electron';
+import { app, BrowserWindow, ipcMain } from 'electron';
 import path from 'node:path';
 import started from 'electron-squirrel-startup';
+import { IpcChannels } from './ipc';
 
 // Handle creating/removing shortcuts on Windows when installing/uninstalling.
 if (started) {
   app.quit();
 }
+
+ipcMain.handle(IpcChannels.ping, (_event, message: string) => {
+  return `pong: ${message}`;
+});
+
+ipcMain.handle(IpcChannels.getAppInfo, () => {
+  return {
+    version: app.getVersion(),
+    platform: process.platform,
+    arch: process.arch,
+    uptime: process.uptime(),
+  };
+});
 
 const createWindow = () => {
   // Create the browser window.
@@ -15,6 +29,22 @@ const createWindow = () => {
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
     },
+  });
+
+  // Send a heartbeat from the main process to the renderer every 5 seconds,
+  // demonstrating main -> renderer one-way push over IPC.
+  mainWindow.webContents.on('did-finish-load', () => {
+    const broadcast = () => {
+      const windows = BrowserWindow.getAllWindows();
+      for (const win of windows) {
+        win.webContents.send(IpcChannels.push, {
+          source: 'main',
+          message: `heartbeat at ${new Date().toLocaleTimeString()}`,
+        });
+      }
+    };
+    broadcast();
+    setInterval(broadcast, 5000);
   });
 
   // and load the index.html of the app.

@@ -24,6 +24,9 @@ Electron desktop app scaffolded with Electron Forge's `vite-typescript` template
 - `src/main.tsx` — React renderer entry
 - `src/index.css` — Tailwind CSS + shadcn theme tokens (Tailwind v4 `@theme inline`)
 - `src/App.tsx` — root component
+- `src/ipc.ts` — shared IPC channel names + payload types (`NaodaiApi`)
+- `src/preload.ts` — exposes `window.api` via `contextBridge` (typed `NaodaiApi`)
+- `src/env.d.ts` — declares `window.api` for the renderer
 - `src/lib/utils.ts` — `cn()` helper
 - `src/components/ui/` — shadcn/ui components
 - `vite.main.config.ts`, `vite.preload.config.ts`, `vite.renderer.config.mts` — Vite configs
