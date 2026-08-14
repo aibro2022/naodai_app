@@ -107,6 +107,12 @@ const App: React.FC = () => {
               </span>
               {systemInfo.osArch}
             </div>
+            <div>
+              <span className="font-medium text-muted-foreground">
+                Platform:{" "}
+              </span>
+              {systemInfo.platform}
+            </div>
           </div>
         )}
         <div className="rounded-md border border-border p-4">

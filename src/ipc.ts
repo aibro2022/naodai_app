@@ -26,6 +26,7 @@ export interface SystemInfo {
   gpuVendor: string;
   gpuVram: number;
   osArch: string;
+  platform: string;
 }
 
 export interface PushPayload {

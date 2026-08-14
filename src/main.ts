@@ -35,7 +35,6 @@ ipcMain.handle(IpcChannels.getSystemInfo, async () => {
   ]);
   return {
     gpus: graphicsData.controllers.map((controller) => ({
-      vendor: controller.vendor,
       model: controller.model,
       vram: controller.vram,
     })),
@@ -44,6 +43,7 @@ ipcMain.handle(IpcChannels.getSystemInfo, async () => {
       (sum, item) => sum + (item.vram ?? 0),
       0,
     ),
+    platform: process.platform,
     osArch: arch(),
     cpuModel: cpuData.manufacturer
       ? `${cpuData.manufacturer} ${cpuData.brand}`.trim()
