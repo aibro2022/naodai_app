@@ -2,6 +2,8 @@ export const IpcChannels = {
   ping: 'ipc:ping',
   getAppInfo: 'ipc:get-app-info',
   getSystemInfo: 'ipc:get-system-info',
+  getMaxCudaVersion: 'ipc:get-max-cuda-version',
+  selectFolder: 'ipc:select-folder',
   push: 'ipc:push',
 } as const;
 
@@ -25,7 +27,10 @@ export interface SystemInfo {
   memoryTotal: number;
   gpuVendor: string;
   gpuVram: number;
+  cudaVersion: string;
+  cudaCapability: string;
   osArch: string;
+  platform: string;
 }
 
 export interface PushPayload {
@@ -37,5 +42,7 @@ export interface NaodaiApi {
   ping: (message: string) => Promise<string>;
   getAppInfo: () => Promise<AppInfo>;
   getSystemInfo: () => Promise<SystemInfo>;
+  getMaxCudaVersion: () => Promise<string | null>;
+  selectFolder: () => Promise<string | null>;
   onPush: (listener: (payload: PushPayload) => void) => () => void;
 }
