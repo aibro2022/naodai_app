@@ -95,7 +95,7 @@ export function AppSidebar({
       label: 'CPU',
       icon: Cpu,
       value: systemInfo
-        ? `${systemInfo.cpuModel} (${systemInfo.cpuCores} cores)`
+        ? `${systemInfo.cpuModel} (${systemInfo.cpuCores} cores) x${systemInfo.processors}`
         : '…',
     },
     {
@@ -111,7 +111,7 @@ export function AppSidebar({
           ? systemInfo.gpus
               .map(
                 (gpu) =>
-                  `${gpu.model}${gpu.vram != null ? ` ${formatVram(gpu.vram)}` : ''}`,
+                  `${gpu.model}${gpu.vram != null ? ` ${formatVram(gpu.vram)}` : ''} x${systemInfo.gpus.length}`,
               )
               .join(' / ')
           : 'no GPU detected'

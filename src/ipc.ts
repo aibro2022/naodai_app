@@ -26,6 +26,7 @@ export interface SystemInfo {
   gpus: GpuInfo[];
   cpuModel: string;
   cpuCores: number;
+  processors: number;
   memoryTotal: number;
   gpuVendor: string;
   gpuVram: number;

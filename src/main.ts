@@ -58,6 +58,7 @@ const querySystemInfo = async () => {
       ? `${cpuData.manufacturer} ${cpuData.brand}`.trim()
       : cpuData.brand,
     cpuCores: cpuData.cores,
+    processors: cpuData.processors,
     memoryTotal: memData.total,
   };
 };
