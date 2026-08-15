@@ -1,21 +1,12 @@
 import { useEffect, useState } from 'react';
 
-const STORAGE_KEY = 'naodai.model-folder';
-
-export const getModelFolder = (): string => {
-  try {
-    return localStorage.getItem(STORAGE_KEY) ?? '';
-  } catch {
-    return '';
-  }
+export const getModelFolder = async (): Promise<string> => {
+  const config = await window.api.getConfig();
+  return config.modelFolder ?? '';
 };
 
-export const setModelFolder = (value: string): void => {
-  try {
-    localStorage.setItem(STORAGE_KEY, value);
-  } catch {
-    // ignore storage errors
-  }
+export const setModelFolder = async (value: string): Promise<void> => {
+  await window.api.updateConfig({ modelFolder: value });
 };
 
 export const validateModelFolder = (value: string): string | null => {
@@ -30,16 +21,18 @@ export const validateModelFolder = (value: string): string | null => {
 };
 
 export function useModelFolder() {
-  const [folder, setFolder] = useState<string>(getModelFolder);
+  const [folder, setFolder] = useState<string>('');
 
   useEffect(() => {
-    const onStorage = (event: StorageEvent) => {
-      if (event.key === STORAGE_KEY) {
-        setFolder(event.newValue ?? '');
+    let cancelled = false;
+    getModelFolder().then((value) => {
+      if (!cancelled) {
+        setFolder(value);
       }
+    });
+    return () => {
+      cancelled = true;
     };
-    window.addEventListener('storage', onStorage);
-    return () => window.removeEventListener('storage', onStorage);
   }, []);
 
   const updateFolder = (value: string) => {

@@ -9,9 +9,12 @@ import {
 const api: NaodaiApi = {
   ping: (message) => ipcRenderer.invoke(IpcChannels.ping, message),
   getAppInfo: () => ipcRenderer.invoke(IpcChannels.getAppInfo),
-  getSystemInfo: () => ipcRenderer.invoke(IpcChannels.getSystemInfo),
+  getSystemInfo: (force) =>
+    ipcRenderer.invoke(IpcChannels.getSystemInfo, force),
   getMaxCudaVersion: () => ipcRenderer.invoke(IpcChannels.getMaxCudaVersion),
   selectFolder: () => ipcRenderer.invoke(IpcChannels.selectFolder),
+  getConfig: () => ipcRenderer.invoke(IpcChannels.getConfig),
+  updateConfig: (patch) => ipcRenderer.invoke(IpcChannels.updateConfig, patch),
   onPush: (listener) => {
     const handler = (_event: IpcRendererEvent, payload: PushPayload) => {
       listener(payload);

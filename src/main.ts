@@ -5,7 +5,8 @@ import { graphics, cpu, mem } from 'systeminformation';
 import { arch } from 'node:os';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { IpcChannels } from './ipc';
+import { IpcChannels, type AppConfig } from './ipc';
+import { readConfig, updateConfig, ensureConfigFile } from './config';
 
 const execFileAsync = promisify(execFile);
 
@@ -31,19 +32,22 @@ ipcMain.handle(IpcChannels.getAppInfo, () => {
   };
 });
 
-ipcMain.handle(IpcChannels.getSystemInfo, async () => {
+const querySystemInfo = async () => {
   const [graphicsData, cpuData, memData] = await Promise.all([
     graphics(),
     cpu(),
     mem(),
   ]);
+  const gpuVendor = graphicsData.controllers[0]?.vendor ?? '';
   return {
     gpus: graphicsData.controllers.map((controller) => ({
+      vendor: controller.vendor ?? '',
       model: controller.model,
       vram: controller.vram,
     })),
-    gpuVendor: graphicsData.controllers[0]?.vendor ?? '',
-    cudaVersion: graphicsData.controllers[0]?.vendor ?? ''.includes("NVIDIA") ? await getMaxCudaVersion() : "",
+    gpuVendor,
+    cudaVersion: gpuVendor ? (await getMaxCudaVersion()) ?? '' : '',
+    cudaCapability: gpuVendor ? (await getCudaCapability()) ?? '' : '',
     gpuVram: graphicsData.controllers.reduce(
       (sum, item) => sum + (item.vram ?? 0),
       0,
@@ -56,7 +60,28 @@ ipcMain.handle(IpcChannels.getSystemInfo, async () => {
     cpuCores: cpuData.cores,
     memoryTotal: memData.total,
   };
+};
+
+ipcMain.handle(IpcChannels.getSystemInfo, async (_event, force = false) => {
+  const cached = readConfig().systemInfo;
+  if (cached && !force) {
+    return cached;
+  }
+  const info = await querySystemInfo();
+  updateConfig({ systemInfo: info });
+  return info;
 });
+
+ipcMain.handle(IpcChannels.getConfig, () => {
+  return readConfig();
+});
+
+ipcMain.handle(
+  IpcChannels.updateConfig,
+  (_event, patch: Partial<AppConfig>) => {
+    return updateConfig(patch);
+  },
+);
 
 /**
  * Runs `nvidia-smi` and extracts the max CUDA version the current GPU supports
@@ -68,6 +93,19 @@ const getMaxCudaVersion = async (): Promise<string | null> => {
     const { stdout } = await execFileAsync('nvidia-smi');
     const match = stdout.match(/CUDA (?:UMD )?Version:\s*(\d+\.\d+)/);
     return match ? match[1] : null;
+  } catch {
+    return null;
+  }
+};
+
+const getCudaCapability = async (): Promise<string | null> => {
+  try {
+    const { stdout } = await execFileAsync('nvidia-smi', [
+      '--query-gpu=compute_cap',
+      '--format=csv,noheader',
+    ]);
+    const value = stdout.trim().split('\n')[0]?.trim();
+    return value && value.toLowerCase() !== 'n/a' ? value : null;
   } catch {
     return null;
   }
@@ -206,6 +244,7 @@ const createWindow = () => {
 // initialization and is ready to create browser windows.
 // Some APIs can only be used after this event occurs.
 app.on('ready', () => {
+  ensureConfigFile();
   createTray();
   createWindow();
 });
