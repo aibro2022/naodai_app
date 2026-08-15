@@ -21,10 +21,18 @@ const App: React.FC = () => {
   const [systemInfo, setSystemInfo] = useState<SystemInfo | null>(null);
   const [user, setUser] = useState<User | null>(null);
   const [activePage, setActivePage] = useState<Page>('home');
+  const [refreshing, setRefreshing] = useState(false);
 
-  const loadSystemInfo = async () => {
-    const info = await window.api.getSystemInfo();
-    setSystemInfo(info);
+  const loadSystemInfo = async (force = false) => {
+    if (force) {
+      setRefreshing(true);
+    }
+    try {
+      const info = await window.api.getSystemInfo(force);
+      setSystemInfo(info);
+    } finally {
+      setRefreshing(false);
+    }
   };
 
   useEffect(() => {
@@ -46,6 +54,8 @@ const App: React.FC = () => {
         user={user}
         activePage={activePage}
         onNavigate={setActivePage}
+        refreshing={refreshing}
+        onRefreshSystemInfo={() => loadSystemInfo(true)}
         onLogin={handleLogin}
         onLogout={handleLogout}
       />
@@ -68,7 +78,7 @@ const App: React.FC = () => {
           ) : (
             <HomeView
               systemInfo={systemInfo}
-              onRefreshSystemInfo={loadSystemInfo}
+              onRefreshSystemInfo={() => loadSystemInfo(true)}
             />
           )}
         </main>

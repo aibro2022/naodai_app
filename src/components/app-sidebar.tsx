@@ -7,6 +7,7 @@ import {
   LogOut,
   MemoryStick,
   Gpu,
+  RefreshCw,
   Settings,
   Sparkles,
   ToolCase,
@@ -28,6 +29,7 @@ import {
   SidebarContent,
   SidebarFooter,
   SidebarGroup,
+  SidebarGroupAction,
   SidebarGroupContent,
   SidebarGroupLabel,
   SidebarHeader,
@@ -42,6 +44,7 @@ import {
   TooltipTrigger,
 } from '@/components/ui/tooltip';
 import type { SystemInfo } from '@/ipc';
+import { cn } from '@/lib/utils';
 
 export interface User {
   name: string;
@@ -54,7 +57,9 @@ interface AppSidebarProps {
   systemInfo: SystemInfo | null;
   user: User | null;
   activePage: Page;
+  refreshing: boolean;
   onNavigate: (page: Page) => void;
+  onRefreshSystemInfo: () => void;
   onLogin: () => void;
   onLogout: () => void;
 }
@@ -73,7 +78,9 @@ export function AppSidebar({
   systemInfo,
   user,
   activePage,
+  refreshing,
   onNavigate,
+  onRefreshSystemInfo,
   onLogin,
   onLogout,
 }: AppSidebarProps) {
@@ -88,7 +95,7 @@ export function AppSidebar({
       label: 'CPU',
       icon: Cpu,
       value: systemInfo
-        ? `${systemInfo.cpuModel} (${systemInfo.cpuCores} cores)`
+        ? `${systemInfo.cpuModel} (${systemInfo.cpuCores} cores) x${systemInfo.processors}`
         : '…',
     },
     {
@@ -104,7 +111,7 @@ export function AppSidebar({
           ? systemInfo.gpus
               .map(
                 (gpu) =>
-                  `${gpu.model}${gpu.vram != null ? ` ${formatVram(gpu.vram)}` : ''}`,
+                  `${gpu.model}${gpu.vram != null ? ` ${formatVram(gpu.vram)}` : ''} x${systemInfo.gpus.length}`,
               )
               .join(' / ')
           : 'no GPU detected'
@@ -116,9 +123,9 @@ export function AppSidebar({
       value: systemInfo ? formatVram(systemInfo.gpuVram) : '…',
     },
     {
-      label: 'Cuda^',
+      label: 'CUDA^',
       icon: ToolCase,
-      value: systemInfo ? systemInfo.cudaVersion : '',
+      value: systemInfo ? systemInfo.cudaVersion : '…',
     },
     {
       label: '架构',
@@ -170,26 +177,48 @@ export function AppSidebar({
 
         <SidebarSeparator />
 
-        <SidebarGroup>
+<SidebarGroup>
           <SidebarGroupLabel>信息</SidebarGroupLabel>
+          <SidebarGroupAction
+            title={refreshing ? '刷新中…' : '刷新系统信息'}
+            disabled={refreshing}
+            onClick={onRefreshSystemInfo}
+            className="disabled:opacity-40"
+          >
+            <RefreshCw className={refreshing ? 'animate-spin !size-3 shrink-0' : '!size-3 shrink-0'} />
+            <span className="sr-only">刷新系统信息</span>
+          </SidebarGroupAction>
           <SidebarGroupContent>
             <SidebarMenu>
               {infoItems.map((item) => (
                 <SidebarMenuItem key={item.label}>
                   <Tooltip>
                     <TooltipTrigger asChild>
-                      <SidebarMenuButton className="h-auto py-2">
-                        <item.icon className="size-4 shrink-0" />
+                      <SidebarMenuButton
+                        className="h-auto py-2"
+                        disabled={refreshing}
+                      >
+                        <item.icon
+                          className={cn(
+                            'size-4 shrink-0',
+                            refreshing && 'text-muted-foreground',
+                          )}
+                        />
                         <span className="w-16 shrink-0 text-xs text-sidebar-foreground/70">
                           {item.label}
                         </span>
-                        <span className="min-w-0 flex-1 truncate text-left text-xs text-muted-foreground">
-                          {item.value}
+                        <span
+                          className={cn(
+                            'min-w-0 flex-1 truncate text-left text-xs text-muted-foreground',
+                            refreshing && 'opacity-50',
+                          )}
+                        >
+                          {refreshing ? '刷新中…' : item.value}
                         </span>
                       </SidebarMenuButton>
                     </TooltipTrigger>
-                    <TooltipContent side="top" align="center">
-                      {item.label}: {item.value}
+                    <TooltipContent side="right" align="center">
+                      {refreshing ? '刷新中…' : `${item.label}: ${item.value}`}
                     </TooltipContent>
                   </Tooltip>
                 </SidebarMenuItem>
