@@ -1,9 +1,13 @@
-import { app, BrowserWindow, ipcMain, Tray, Menu, nativeImage } from 'electron';
+import { app, BrowserWindow, ipcMain, Tray, Menu, nativeImage, dialog } from 'electron';
 import path from 'node:path';
 import started from 'electron-squirrel-startup';
 import { graphics, cpu, mem } from 'systeminformation';
 import { arch } from 'node:os';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
 import { IpcChannels } from './ipc';
+
+const execFileAsync = promisify(execFile);
 
 // Handle creating/removing shortcuts on Windows when installing/uninstalling.
 if (started) {
@@ -39,6 +43,7 @@ ipcMain.handle(IpcChannels.getSystemInfo, async () => {
       vram: controller.vram,
     })),
     gpuVendor: graphicsData.controllers[0]?.vendor ?? '',
+    cudaVersion: graphicsData.controllers[0]?.vendor ?? ''.includes("NVIDIA") ? await getMaxCudaVersion() : "",
     gpuVram: graphicsData.controllers.reduce(
       (sum, item) => sum + (item.vram ?? 0),
       0,
@@ -51,6 +56,38 @@ ipcMain.handle(IpcChannels.getSystemInfo, async () => {
     cpuCores: cpuData.cores,
     memoryTotal: memData.total,
   };
+});
+
+/**
+ * Runs `nvidia-smi` and extracts the max CUDA version the current GPU supports
+ * from the header line (e.g. "CUDA Version: 12.4"). Returns null when
+ * nvidia-smi is unavailable or the version cannot be parsed.
+ */
+const getMaxCudaVersion = async (): Promise<string | null> => {
+  try {
+    const { stdout } = await execFileAsync('nvidia-smi');
+    const match = stdout.match(/CUDA (?:UMD )?Version:\s*(\d+\.\d+)/);
+    return match ? match[1] : null;
+  } catch {
+    return null;
+  }
+};
+
+
+ipcMain.handle(IpcChannels.selectFolder, async () => {
+  const win = BrowserWindow.getAllWindows()[0];
+  const options: Electron.OpenDialogOptions = {
+    title: '选择模型文件夹',
+    buttonLabel: '选择',
+    properties: ['openDirectory', 'createDirectory'],
+  };
+  const result = win
+    ? await dialog.showOpenDialog(win, options)
+    : await dialog.showOpenDialog(options);
+  if (result.canceled || result.filePaths.length === 0) {
+    return null;
+  }
+  return result.filePaths[0];
 });
 
 const createTrayIcon = () => {
