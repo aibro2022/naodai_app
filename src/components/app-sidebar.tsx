@@ -144,11 +144,16 @@ export function AppSidebar({
       <SidebarHeader>
         <SidebarMenu>
           <SidebarMenuItem>
-            <SidebarMenuButton size="lg" tooltip="naodai">
+            <SidebarMenuButton
+              size="lg"
+              tooltip="naodai"
+              isActive={activePage === 'home'}
+              onClick={() => onNavigate('home')}
+            >
               <div className="flex aspect-square size-8 items-center justify-center rounded-lg bg-primary text-primary-foreground">
                 <Bot />
               </div>
-              <span className="text-base font-semibold">naodai</span>
+              <span className="text-base font-semibold">脑袋</span>
             </SidebarMenuButton>
           </SidebarMenuItem>
         </SidebarMenu>

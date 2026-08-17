@@ -7,7 +7,9 @@ import {
 } from '@/components/ui/sidebar';
 import { AppSidebar, type Page, type User } from '@/components/app-sidebar';
 import { HomeView } from '@/components/home-view';
+import { ModelsPage } from '@/components/models-page';
 import { SettingsPage } from '@/components/settings-page';
+import { getModelFolder } from '@/lib/settings-store';
 import type { SystemInfo } from '@/ipc';
 
 const pageTitles: Record<Page, string> = {
@@ -37,6 +39,14 @@ const App: React.FC = () => {
 
   useEffect(() => {
     loadSystemInfo();
+  }, []);
+
+  useEffect(() => {
+    getModelFolder().then((folder) => {
+      if (!folder) {
+        setActivePage('settings');
+      }
+    });
   }, []);
 
   const handleLogin = () => {
@@ -72,7 +82,7 @@ const App: React.FC = () => {
           {activePage === 'settings' ? (
             <SettingsPage />
           ) : activePage === 'models' ? (
-            <p className="text-sm text-muted-foreground">模型页面开发中…</p>
+            <ModelsPage />
           ) : activePage === 'agents' ? (
             <p className="text-sm text-muted-foreground">Agent 页面开发中…</p>
           ) : (

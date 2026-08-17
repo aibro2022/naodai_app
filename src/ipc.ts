@@ -44,6 +44,7 @@ export interface PushPayload {
 export interface AppConfig {
   systemInfo?: SystemInfo;
   modelFolder?: string;
+  contextSizeBytes?: number;
 }
 
 export interface NaodaiApi {
