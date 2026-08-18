@@ -5,8 +5,21 @@ import { graphics, cpu, mem } from 'systeminformation';
 import { arch } from 'node:os';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { IpcChannels, type AppConfig } from './ipc';
+import {
+  IpcChannels,
+  type AppConfig,
+  type ModelsPagedParams,
+  type RegisterPayload,
+} from './ipc';
 import { readConfig, updateConfig, ensureConfigFile } from './config';
+import {
+  authLogin,
+  authLogout,
+  authProfile,
+  authRegister,
+  fetchModelsPaged,
+} from './api';
+import { readModelsCache, writeModelsCache } from './models-cache';
 
 const execFileAsync = promisify(execFile);
 
@@ -83,6 +96,41 @@ ipcMain.handle(
     return updateConfig(patch);
   },
 );
+
+ipcMain.handle(
+  IpcChannels.authLogin,
+  (_event, username: string, password: string) => {
+    return authLogin(username, password);
+  },
+);
+
+ipcMain.handle(IpcChannels.authLogout, () => {
+  return authLogout();
+});
+
+ipcMain.handle(IpcChannels.authProfile, () => {
+  return authProfile();
+});
+
+ipcMain.handle(
+  IpcChannels.authRegister,
+  (_event, payload: RegisterPayload) => {
+    return authRegister(payload);
+  },
+);
+
+ipcMain.handle(
+  IpcChannels.modelsPaged,
+  async (_event, params: ModelsPagedParams) => {
+    const result = await fetchModelsPaged(params);
+    writeModelsCache(result);
+    return result;
+  },
+);
+
+ipcMain.handle(IpcChannels.modelsCacheRead, () => {
+  return readModelsCache();
+});
 
 /**
  * Runs `nvidia-smi` and extracts the max CUDA version the current GPU supports

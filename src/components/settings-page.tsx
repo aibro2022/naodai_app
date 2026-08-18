@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { FolderOpen, Info, TriangleAlert } from 'lucide-react';
+import { FolderOpen, Info, LogOut, TriangleAlert } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Slider } from '@/components/ui/slider';
@@ -10,8 +10,15 @@ import {
   useModelFolder,
   validateModelFolder,
 } from '@/lib/settings-store';
+import { UserAvatar } from '@/components/user-avatar';
+import type { Account } from '@/ipc';
 
-export function SettingsPage() {
+interface SettingsPageProps {
+  user: Account | null;
+  onLogout: () => void;
+}
+
+export function SettingsPage({ user, onLogout }: SettingsPageProps) {
   const { folder, setFolder } = useModelFolder();
   const { value: contextSize, setValue: setContextSize } = useContextSize();
   const [error, setError] = useState<string | null>(null);
@@ -105,6 +112,36 @@ export function SettingsPage() {
           <Info className="mt-0.5 size-4 shrink-0" />
           上下文窗口大小影响模型一次性最多能记住多少文字（提示词 + 历史对话 + AI 输出）。同样也会增加显存/内存的占用。请根据模型的性能和显存大小，选择合适的上下文窗口大小。
         </p>
+      </div>
+
+      <div className="flex flex-col gap-2">
+        <label
+          htmlFor="account"
+          className="text-sm font-medium leading-none select-none"
+        >
+          账号
+        </label>
+        {user ? (
+          <div className="flex flex-col gap-3 rounded-md border border-border p-4">
+            <div className="flex items-center gap-3">
+              <UserAvatar username={user.username} className="size-8" />
+              <div className="flex min-w-0 flex-col">
+                <span className="truncate text-sm font-medium">
+                  {user.nickname ?? user.username}
+                </span>
+                <span className="truncate text-xs text-muted-foreground">
+                  {user.email ?? user.username}
+                </span>
+              </div>
+            </div>
+            <Button variant="outline" onClick={onLogout}>
+              <LogOut />
+              登出
+            </Button>
+          </div>
+        ) : (
+          <p className="text-sm text-muted-foreground">当前未登录</p>
+        )}
       </div>
     </div>
   );

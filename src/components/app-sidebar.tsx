@@ -1,25 +1,23 @@
+import { useState } from 'react';
 import {
   Bot,
   Boxes,
   Cpu,
   Layers,
   LogIn,
-  LogOut,
   MemoryStick,
   Gpu,
   RefreshCw,
   Settings,
   Sparkles,
   ToolCase,
+  UserPlus,
 } from 'lucide-react';
-import {
-  Avatar,
-  AvatarFallback,
-} from '@/components/ui/avatar';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
 import {
   DropdownMenu,
   DropdownMenuContent,
-  DropdownMenuItem,
   DropdownMenuLabel,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
@@ -43,25 +41,22 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from '@/components/ui/tooltip';
-import type { SystemInfo } from '@/ipc';
-import { cn } from '@/lib/utils';
-
-export interface User {
-  name: string;
-  email: string;
-}
+import type { Account, RegisterPayload, SystemInfo } from '@/ipc';
+import { cn, formatErrorMessage } from '@/lib/utils';
+import { UserAvatar } from '@/components/user-avatar';
 
 export type Page = 'home' | 'models' | 'agents' | 'settings';
 
 interface AppSidebarProps {
   systemInfo: SystemInfo | null;
-  user: User | null;
+  user: Account | null;
+  authLoading: boolean;
   activePage: Page;
   refreshing: boolean;
   onNavigate: (page: Page) => void;
   onRefreshSystemInfo: () => void;
-  onLogin: () => void;
-  onLogout: () => void;
+  onLogin: (username: string, password: string) => Promise<void>;
+  onRegister: (payload: RegisterPayload) => Promise<void>;
 }
 
 const formatBytes = (bytes: number) => {
@@ -74,15 +69,202 @@ const formatVram = (mb: number) => {
   return gb >= 1 ? `${gb.toFixed(1)} GB` : `${mb.toFixed(0)} MB`;
 };
 
+function LoginMenu({
+  onLogin,
+}: {
+  onLogin: (username: string, password: string) => Promise<void>;
+}) {
+  const [open, setOpen] = useState(false);
+  const [username, setUsername] = useState('');
+  const [password, setPassword] = useState('');
+  const [error, setError] = useState<string | null>(null);
+  const [submitting, setSubmitting] = useState(false);
+
+  const submit = async () => {
+    if (!username.trim() || !password) {
+      setError('请输入用户名和密码');
+      return;
+    }
+    setSubmitting(true);
+    setError(null);
+    try {
+      await onLogin(username.trim(), password);
+      setOpen(false);
+      setUsername('');
+      setPassword('');
+    } catch (err) {
+      setError(formatErrorMessage(err, '登录失败'));
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <DropdownMenu open={open} onOpenChange={setOpen}>
+      <DropdownMenuTrigger asChild>
+        <SidebarMenuButton tooltip="登录" className="flex-1">
+          <LogIn />
+          <span>登录</span>
+        </SidebarMenuButton>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent side="top" align="center" className="w-64">
+        <DropdownMenuLabel>登录</DropdownMenuLabel>
+        <DropdownMenuSeparator />
+        <form
+          className="flex flex-col gap-2 px-2 py-1"
+          onSubmit={(event) => {
+            event.preventDefault();
+            submit();
+          }}
+        >
+          <Input
+            autoFocus
+            placeholder="用户名"
+            value={username}
+            onChange={(event) => setUsername(event.target.value)}
+          />
+          <Input
+            type="password"
+            placeholder="密码"
+            value={password}
+            onChange={(event) => setPassword(event.target.value)}
+          />
+          {error && <p className="text-xs text-destructive">{error}</p>}
+          <Button
+            type="submit"
+            size="sm"
+            className="w-full"
+            disabled={submitting}
+          >
+            {submitting ? '登录中…' : '登录'}
+          </Button>
+        </form>
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+}
+
+function RegisterMenu({
+  onRegister,
+}: {
+  onRegister: (payload: RegisterPayload) => Promise<void>;
+}) {
+  const [open, setOpen] = useState(false);
+  const [username, setUsername] = useState('');
+  const [password, setPassword] = useState('');
+  const [nickname, setNickname] = useState('');
+  const [email, setEmail] = useState('');
+  const [error, setError] = useState<string | null>(null);
+  const [success, setSuccess] = useState<string | null>(null);
+  const [submitting, setSubmitting] = useState(false);
+
+  const reset = () => {
+    setUsername('');
+    setPassword('');
+    setNickname('');
+    setEmail('');
+    setError(null);
+    setSuccess(null);
+  };
+
+  const submit = async () => {
+    if (!username.trim() || !password) {
+      setError('请输入用户名和密码');
+      return;
+    }
+    setSubmitting(true);
+    setError(null);
+    setSuccess(null);
+    try {
+      await onRegister({
+        username: username.trim(),
+        password,
+        nickname: nickname.trim() || undefined,
+        email: email.trim() || undefined,
+      });
+      setSuccess('注册成功，请登录');
+    } catch (err) {
+      setError(formatErrorMessage(err, '注册失败'));
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <DropdownMenu
+      open={open}
+      onOpenChange={(next) => {
+        setOpen(next);
+        if (next) {
+          reset();
+        }
+      }}
+    >
+      <DropdownMenuTrigger asChild>
+        <SidebarMenuButton tooltip="注册" className="flex-1">
+          <UserPlus />
+          <span>注册</span>
+        </SidebarMenuButton>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent side="top" align="center" className="w-64">
+        <DropdownMenuLabel>注册</DropdownMenuLabel>
+        <DropdownMenuSeparator />
+        <form
+          className="flex flex-col gap-2 px-2 py-1"
+          onSubmit={(event) => {
+            event.preventDefault();
+            submit();
+          }}
+        >
+          <Input
+            autoFocus
+            placeholder="用户名"
+            value={username}
+            onChange={(event) => setUsername(event.target.value)}
+          />
+          <Input
+            type="password"
+            placeholder="密码"
+            value={password}
+            onChange={(event) => setPassword(event.target.value)}
+          />
+          <Input
+            placeholder="昵称（可选）"
+            value={nickname}
+            onChange={(event) => setNickname(event.target.value)}
+          />
+          <Input
+            type="email"
+            placeholder="邮箱（可选）"
+            value={email}
+            onChange={(event) => setEmail(event.target.value)}
+          />
+          {error && <p className="text-xs text-destructive">{error}</p>}
+          {success && <p className="text-xs text-emerald-600">{success}</p>}
+          <Button
+            type="submit"
+            size="sm"
+            className="w-full"
+            disabled={submitting}
+          >
+            {submitting ? '注册中…' : '注册'}
+          </Button>
+        </form>
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+}
+
 export function AppSidebar({
   systemInfo,
   user,
+  authLoading,
   activePage,
   refreshing,
   onNavigate,
   onRefreshSystemInfo,
   onLogin,
-  onLogout,
+  onRegister,
 }: AppSidebarProps) {
   const features = [
     { page: 'models' as const, title: '模型', icon: Bot },
@@ -237,40 +419,27 @@ export function AppSidebar({
         <SidebarMenu>
           <SidebarMenuItem>
             {user ? (
-              <DropdownMenu>
-                <DropdownMenuTrigger asChild>
-                  <SidebarMenuButton size="lg" tooltip={user.name}>
-                    <Avatar className="size-6 rounded-lg">
-                      <AvatarFallback>{user.name.charAt(0)}</AvatarFallback>
-                    </Avatar>
-                    <div className="grid flex-1 text-left text-sm leading-tight">
-                      <span className="truncate font-medium">{user.name}</span>
-                      <span className="truncate text-xs text-muted-foreground">
-                        {user.email}
-                      </span>
-                    </div>
-                  </SidebarMenuButton>
-                </DropdownMenuTrigger>
-                <DropdownMenuContent
-                  side="top"
-                  align="center"
-                  className="w-56"
-                >
-                  <DropdownMenuLabel className="truncate">
-                    {user.name} · {user.email}
-                  </DropdownMenuLabel>
-                  <DropdownMenuSeparator />
-                  <DropdownMenuItem onClick={onLogout}>
-                    <LogOut />
-                    登出
-                  </DropdownMenuItem>
-                </DropdownMenuContent>
-              </DropdownMenu>
-            ) : (
-              <SidebarMenuButton tooltip="登录" onClick={onLogin}>
+              <SidebarMenuButton size="lg" tooltip={user.username}>
+                <UserAvatar username={user.username} />
+                <div className="grid flex-1 text-left text-sm leading-tight">
+                  <span className="truncate font-medium">
+                    {user.nickname ?? user.username}
+                  </span>
+                  <span className="truncate text-xs text-muted-foreground">
+                    {user.email ?? user.username}
+                  </span>
+                </div>
+              </SidebarMenuButton>
+            ) : authLoading ? (
+              <SidebarMenuButton disabled tooltip="登录">
                 <LogIn />
                 <span>登录</span>
               </SidebarMenuButton>
+            ) : (
+              <div className="flex w-full">
+                <LoginMenu onLogin={onLogin} />
+                <RegisterMenu onRegister={onRegister} />
+              </div>
             )}
           </SidebarMenuItem>
         </SidebarMenu>
