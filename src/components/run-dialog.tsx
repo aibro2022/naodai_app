@@ -231,7 +231,7 @@ export function RunDialog({
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-      <div className="flex max-h-[85vh] w-full max-w-md flex-col rounded-lg border border-border bg-background p-5 shadow-lg">
+      <div className="flex h-[32rem] max-h-[85vh] w-[28rem] max-w-[90vw] min-h-[24rem] min-w-[24rem] resize flex-col overflow-auto rounded-lg border border-border bg-background p-5 shadow-lg">
         <h2 className="text-base font-medium">运行 {record.weightName}</h2>
 
         {!llama && (
@@ -243,7 +243,7 @@ export function RunDialog({
         <div className="mt-4 flex flex-col gap-3">
           {mmprojFiles.length > 0 && (
             <label className="flex flex-col gap-1 text-xs text-muted-foreground">
-              MMProj 权重
+              多模态投影器
               <select
                 value={mmprojPath}
                 disabled={running}
@@ -262,7 +262,7 @@ export function RunDialog({
 
           {draftFiles.length > 0 && (
             <label className="flex flex-col gap-1 text-xs text-muted-foreground">
-              Draft 权重
+              草稿模型
               <select
                 value={draftPath}
                 disabled={running}
@@ -316,7 +316,7 @@ export function RunDialog({
               onChange={(event) => setTools(event.target.checked)}
               className="size-3.5 accent-primary"
             />
-            开启 Tools（--tools all）
+            开启Tools
           </label>
         </div>
 
@@ -329,7 +329,7 @@ export function RunDialog({
             </span>
             <pre
               ref={logBoxRef}
-              className="h-36 max-h-44 overflow-auto rounded-md border border-border bg-muted/40 p-2 font-mono text-[10px] leading-relaxed text-muted-foreground whitespace-pre-wrap break-words"
+              className="h-36 max-h-[40vh] min-h-24 resize-y overflow-auto rounded-md border border-border bg-muted/40 p-2 font-mono text-[10px] leading-relaxed text-muted-foreground whitespace-pre-wrap break-words"
             >
               {logContent || '等待输出…'}
             </pre>

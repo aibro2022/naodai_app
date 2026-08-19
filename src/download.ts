@@ -20,6 +20,48 @@ const CHUNK_THRESHOLD_BYTES = 500 * 1024 * 1024;
 const CHUNK_CONCURRENCY = 10;
 // 拼接分片时单次读写的缓冲大小。
 const CONCAT_BUFFER_SIZE = 1024 * 1024;
+// 网络层失败（fetch failed）的最大重试次数。
+const MAX_FETCH_RETRIES = 5;
+// 退避起始延迟（毫秒），每次翻倍，最大 10 秒。
+const BACKOFF_BASE_MS = 1000;
+
+const sleep = (ms: number): Promise<void> =>
+  new Promise((resolve) => setTimeout(resolve, ms));
+
+const backoffDelay = (attempt: number): number =>
+  Math.min(BACKOFF_BASE_MS * 2 ** attempt, 10000);
+
+const throwIfCancelled = (signal?: AbortSignal): void => {
+  if (signal?.aborted) {
+    throw new Error('已取消');
+  }
+};
+
+/**
+ * 带重试的 fetch：undici 在网络层失败（DNS、连接中断、socket 异常等）时
+ * 抛出 `TypeError: fetch failed`，这里对其做指数退避重试，缓解不稳定网络
+ * 导致的偶发下载失败。用户取消时不重试。
+ */
+const fetchWithRetry = async (
+  url: string,
+  init: RequestInit = {},
+  signal?: AbortSignal,
+): Promise<Response> => {
+  let attempt = 0;
+  for (;;) {
+    throwIfCancelled(signal);
+    try {
+      return await fetch(url, { ...init, signal });
+    } catch (err) {
+      throwIfCancelled(signal);
+      if (attempt >= MAX_FETCH_RETRIES) {
+        throw err;
+      }
+      attempt++;
+      await sleep(backoffDelay(attempt));
+    }
+  }
+};
 
 const sizeToBytes = (size: number | string | undefined): number | undefined => {
   const value = Number(size);
@@ -166,46 +208,78 @@ const downloadFile = async (
   onProgress: (received: number, total: number) => void,
   signal?: AbortSignal,
 ): Promise<void> => {
-  const response = await fetch(url, { signal });
-  if (!response.ok) {
-    throw new Error(`下载失败 ${url}（HTTP ${response.status}）`);
-  }
-  const total = Number(response.headers.get('content-length')) || 0;
-  if (!response.body) {
-    throw new Error(`下载失败 ${url}（无响应内容）`);
-  }
   const dir = path.dirname(targetPath);
   if (!fs.existsSync(dir)) {
     fs.mkdirSync(dir, { recursive: true });
   }
-  const reader = response.body.getReader();
-  const writer = fs.createWriteStream(targetPath);
   let received = 0;
-  const done = new Promise<void>((resolve, reject) => {
-    writer.on('finish', resolve);
-    writer.on('error', reject);
-  });
-  try {
-    for (;;) {
+  let total = 0;
+  for (let attempt = 0; ; attempt++) {
+    throwIfCancelled(signal);
+    // 断流续传：从已接收字节数发起 Range 请求。
+    const headers: Record<string, string> =
+      received > 0 ? { Range: `bytes=${received}-` } : {};
+    const response = await fetchWithRetry(url, { headers }, signal);
+    if (!response.ok) {
+      if (response.status >= 500 && attempt < MAX_FETCH_RETRIES) {
+        await sleep(backoffDelay(attempt + 1));
+        continue;
+      }
+      throw new Error(`下载失败 ${url}（HTTP ${response.status}）`);
+    }
+    if (received > 0 && response.status !== 206) {
+      // 服务器忽略 Range 请求（返回 200），只能从头重新下载。
+      fs.rmSync(targetPath, { force: true });
+      received = 0;
+    }
+    if (received === 0) {
+      total = Number(response.headers.get('content-length')) || 0;
+    }
+    if (!response.body) {
+      throw new Error(`下载失败 ${url}（无响应内容）`);
+    }
+    const writer = fs.createWriteStream(targetPath, {
+      flags: received === 0 ? 'w' : 'a',
+    });
+    const finished = new Promise<void>((resolve, reject) => {
+      writer.on('finish', resolve);
+      writer.on('error', reject);
+    });
+    try {
+      const reader = response.body.getReader();
+      for (;;) {
+        throwIfCancelled(signal);
+        const { done, value } = await reader.read();
+        if (done) {
+          break;
+        }
+        received += value.length;
+        if (!writer.write(Buffer.from(value))) {
+          await new Promise<void>((resolve) => writer.once('drain', resolve));
+        }
+        onProgress(received, total);
+      }
+      writer.end();
+      await finished;
+      onProgress(received, total);
+      return;
+    } catch (err) {
       if (signal?.aborted) {
+        writer.destroy();
         throw new Error('已取消');
       }
-      const { done: finished, value } = await reader.read();
-      if (finished) {
-        break;
+      // 先冲刷缓冲区，确保已接收数据落盘，再断流续传。
+      writer.end();
+      try {
+        await finished;
+      } catch {
+        // 忽略冲刷阶段的写入错误
       }
-      received += value.length;
-      if (!writer.write(Buffer.from(value))) {
-        await new Promise<void>((resolve) => writer.once('drain', resolve));
+      if (attempt >= MAX_FETCH_RETRIES) {
+        throw err;
       }
-      onProgress(received, total);
+      await sleep(backoffDelay(attempt + 1));
     }
-    writer.end();
-    await done;
-    onProgress(received, total);
-  } catch (err) {
-    writer.destroy();
-    throw err;
   }
 };
 
@@ -220,7 +294,7 @@ const chunkedDownload = async (
   onProgress: (received: number, total: number) => void,
   signal?: AbortSignal,
 ): Promise<boolean> => {
-  const head = await fetch(url, { method: 'HEAD', signal });
+  const head = await fetchWithRetry(url, { method: 'HEAD' }, signal);
   if (!head.ok) {
     throw new Error(`下载失败 ${url}（HTTP ${head.status}）`);
   }
@@ -244,36 +318,60 @@ const chunkedDownload = async (
   let downloaded = 0;
 
   const downloadRange = async (start: number, end: number, partPath: string): Promise<void> => {
-    const response = await fetch(url, {
-      headers: { Range: `bytes=${start}-${end}` },
-      signal,
-    });
-    if (response.status !== 206 || !response.body) {
-      throw new Error(`分段下载失败 ${url}（HTTP ${response.status}）`);
-    }
-    const reader = response.body.getReader();
-    const writer = fs.createWriteStream(partPath);
-    const done = new Promise<void>((resolve, reject) => {
-      writer.on('finish', resolve);
-      writer.on('error', reject);
-    });
-    try {
-      for (;;) {
-        const { done: finished, value } = await reader.read();
-        if (finished) {
-          break;
-        }
-        if (!writer.write(Buffer.from(value))) {
-          await new Promise<void>((resolve) => writer.once('drain', resolve));
-        }
-        downloaded += value.length;
-        onProgress(downloaded, total);
+    // 分片断流时续传，避免整段重下导致进度回退。
+    let partReceived = 0;
+    for (let attempt = 0; ; attempt++) {
+      throwIfCancelled(signal);
+      const headers: Record<string, string> =
+        partReceived > 0
+          ? { Range: `bytes=${start + partReceived}-${end}` }
+          : { Range: `bytes=${start}-${end}` };
+      const response = await fetchWithRetry(url, { headers }, signal);
+      if (response.status !== 206 || !response.body) {
+        throw new Error(`分段下载失败 ${url}（HTTP ${response.status}）`);
       }
-      writer.end();
-      await done;
-    } catch (err) {
-      writer.destroy();
-      throw err;
+      const writer = fs.createWriteStream(partPath, {
+        flags: partReceived === 0 ? 'w' : 'a',
+      });
+      const finished = new Promise<void>((resolve, reject) => {
+        writer.on('finish', resolve);
+        writer.on('error', reject);
+      });
+      try {
+        const reader = response.body.getReader();
+        for (;;) {
+          throwIfCancelled(signal);
+          const { done, value } = await reader.read();
+          if (done) {
+            break;
+          }
+          partReceived += value.length;
+          downloaded += value.length;
+          if (!writer.write(Buffer.from(value))) {
+            await new Promise<void>((resolve) => writer.once('drain', resolve));
+          }
+          onProgress(downloaded, total);
+        }
+        writer.end();
+        await finished;
+        return;
+      } catch (err) {
+        if (signal?.aborted) {
+          writer.destroy();
+          throw new Error('已取消');
+        }
+        // 冲刷缓冲区后按已接收字节续传。
+        writer.end();
+        try {
+          await finished;
+        } catch {
+          // 忽略冲刷阶段的写入错误
+        }
+        if (attempt >= MAX_FETCH_RETRIES) {
+          throw err;
+        }
+        await sleep(backoffDelay(attempt + 1));
+      }
     }
   };
 
@@ -345,9 +443,26 @@ const downloadItem = async (
   signal?: AbortSignal,
 ): Promise<void> => {
   if (item.size != null && item.size > CHUNK_THRESHOLD_BYTES) {
-    const ok = await chunkedDownload(item.url, targetPath, onProgress, signal);
-    if (ok) {
-      return;
+    let attempt = 0;
+    for (;;) {
+      throwIfCancelled(signal);
+      try {
+        const ok = await chunkedDownload(item.url, targetPath, onProgress, signal);
+        if (ok) {
+          return;
+        }
+        // 服务器不支持分段下载，回退到单线程下载。
+        break;
+      } catch (err) {
+        if (signal?.aborted) {
+          throw new Error('已取消');
+        }
+        if (attempt >= MAX_FETCH_RETRIES) {
+          throw err;
+        }
+        attempt++;
+        await sleep(backoffDelay(attempt));
+      }
     }
   }
   await downloadFile(item.url, targetPath, onProgress, signal);
@@ -359,6 +474,8 @@ export const startDownload = async (
   signal?: AbortSignal,
 ): Promise<void> => {
   const totalItems = items.length;
+  // 记录每个文件已上报的进度，重试/续传时保证进度只增不减，避免进度条来回跳。
+  const lastReported = new Map<string, number>();
   for (let index = 0; index < totalItems; index++) {
     const item = items[index];
     const targetPath = path.join(item.targetDir, item.fileName);
@@ -375,7 +492,10 @@ export const startDownload = async (
     let lastProgressAt = 0;
     const throttledProgress = (received: number, total: number) => {
       const now = Date.now();
-      const isFinal = total > 0 && received >= total;
+      const prev = lastReported.get(item.fileName) ?? 0;
+      const effective = received >= prev ? received : prev;
+      lastReported.set(item.fileName, effective);
+      const isFinal = total > 0 && effective >= total;
       if (!isFinal && now - lastProgressAt < 200) {
         return;
       }
@@ -384,9 +504,9 @@ export const startDownload = async (
         fileName: item.fileName,
         index,
         totalItems,
-        received,
+        received: effective,
         total,
-        percent: total ? Math.round((received / total) * 100) : 0,
+        percent: total ? Math.round((effective / total) * 100) : 0,
         done: false,
       });
     };

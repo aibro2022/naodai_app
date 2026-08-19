@@ -477,9 +477,6 @@ function LocalModels({
               <h3 className="truncate text-sm font-medium">{group.modelName}</h3>
               <p className="mt-0.5 text-xs text-muted-foreground">
                 启动器：{group.launcherName}
-                {group.launcherVersionName &&
-                  `（版本 ${group.launcherVersionName}）`}
-                {group.launcherPath && ` · 路径：${group.launcherPath}`}
               </p>
             </div>
             <span className="shrink-0 text-[10px] text-muted-foreground">
@@ -501,28 +498,31 @@ function LocalModels({
                   >
                     {record.weightName}
                   </span>
-                </div>
-                <ul className="flex flex-col gap-0.5">
-                  {record.files.map((file) => (
-                    <li
-                      key={`${file.path}-${file.name}`}
-                      className="truncate text-[11px] text-muted-foreground"
-                      title={file.path}
-                    >
-                      {file.name}
-                    </li>
-                  ))}
-                </ul>
-                <div className="flex justify-end">
                   <Button
                     variant="outline"
                     size="sm"
-                    className="h-6 px-2 text-[11px]"
+                    className="h-6 shrink-0 px-2 text-[11px]"
                     onClick={() => onRun(record)}
                   >
                     运行
                   </Button>
                 </div>
+                <ul className="flex flex-col gap-0.5">
+                  {record.files.map((file) => (
+                    <li
+                      key={`${file.path}-${file.name}`}
+                      className="flex items-center justify-between gap-2 truncate text-[11px] text-muted-foreground"
+                      title={file.path}
+                    >
+                      <span className="min-w-0 truncate">{file.name}</span>
+                      {file.size != null && (
+                        <span className="shrink-0 tabular-nums text-muted-foreground/70">
+                          {(file.size / 1024 ** 3).toFixed(2)} GB
+                        </span>
+                      )}
+                    </li>
+                  ))}
+                </ul>
               </div>
             ))}
           </div>

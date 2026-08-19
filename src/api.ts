@@ -56,7 +56,22 @@ const request = async <T>(
   if (token) {
     headers.set('Authorization', `Bearer ${token}`);
   }
-  const response = await fetch(`${getBaseUrl()}${path}`, { ...init, headers });
+  const isGet = (init.method ?? 'GET').toUpperCase() === 'GET';
+  let attempt = 0;
+  let response: Response;
+  for (;;) {
+    try {
+      response = await fetch(`${getBaseUrl()}${path}`, { ...init, headers });
+      break;
+    } catch (err) {
+      // 网络层偶发失败（fetch failed），GET 请求退避重试。
+      if (!isGet || attempt >= 3) {
+        throw err;
+      }
+      attempt++;
+      await new Promise((resolve) => setTimeout(resolve, 1000 * attempt));
+    }
+  }
   const text = await response.text();
   if (!response.ok) {
     throw parseError(response, text);

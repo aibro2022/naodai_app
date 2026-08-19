@@ -220,7 +220,7 @@ ipcMain.handle(
       args.push('--mmproj', mmprojPath);
     }
     if (draftPath) {
-      args.push('--md', draftPath);
+      args.push('--spec-type draft-dflash --spec-draft', draftPath);
     }
     args.push('-c', String(context));
     if (tools) {

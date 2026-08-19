@@ -95,6 +95,7 @@ const collectFiles = (
         name: wf.name,
         path: filePath,
         type,
+        size: wf.size != null ? Number(wf.size) : undefined,
       });
     }
   };

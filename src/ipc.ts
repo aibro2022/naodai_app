@@ -235,7 +235,13 @@ export interface LocalDownloadRecord {
   contextWindows?: string;
   weightId: number;
   weightName: string;
-  files: { url: string; name: string; path: string; type?: LocalFileKind }[];
+  files: {
+    url: string;
+    name: string;
+    path: string;
+    type?: LocalFileKind;
+    size?: number;
+  }[];
 }
 
 export interface RunModelParams {
