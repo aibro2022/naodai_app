@@ -1,14 +1,14 @@
 import { app, BrowserWindow, ipcMain, Tray, Menu, nativeImage, dialog } from 'electron';
+import fs from 'node:fs';
 import path from 'node:path';
 import started from 'electron-squirrel-startup';
-import { graphics, cpu, mem } from 'systeminformation';
-import { arch } from 'node:os';
-import { execFile } from 'node:child_process';
-import { promisify } from 'node:util';
 import {
   IpcChannels,
   type AppConfig,
+  type DownloadItem,
+  type DownloadProgressPayload,
   type ModelsPagedParams,
+  type PrepareDownloadParams,
   type RegisterPayload,
 } from './ipc';
 import { readConfig, updateConfig, ensureConfigFile } from './config';
@@ -17,11 +17,13 @@ import {
   authLogout,
   authProfile,
   authRegister,
+  fetchLauncherVersionsFilter,
   fetchModelsPaged,
 } from './api';
 import { readModelsCache, writeModelsCache } from './models-cache';
-
-const execFileAsync = promisify(execFile);
+import { prepareDownload, startDownload } from './download';
+import { scanLocalModels } from './local-scan';
+import { querySystemInfo } from './system-info';
 
 // Handle creating/removing shortcuts on Windows when installing/uninstalling.
 if (started) {
@@ -31,6 +33,8 @@ if (started) {
 let mainWindow: BrowserWindow | null = null;
 let tray: Tray | null = null;
 let isQuitting = false;
+let downloadSession: { controller: AbortController; targets: string[] } | null =
+  null;
 
 ipcMain.handle(IpcChannels.ping, (_event, message: string) => {
   return `pong: ${message}`;
@@ -44,37 +48,6 @@ ipcMain.handle(IpcChannels.getAppInfo, () => {
     uptime: process.uptime(),
   };
 });
-
-const querySystemInfo = async () => {
-  const [graphicsData, cpuData, memData] = await Promise.all([
-    graphics(),
-    cpu(),
-    mem(),
-  ]);
-  const gpuVendor = graphicsData.controllers[0]?.vendor ?? '';
-  return {
-    gpus: graphicsData.controllers.map((controller) => ({
-      vendor: controller.vendor ?? '',
-      model: controller.model,
-      vram: controller.vram,
-    })),
-    gpuVendor,
-    cudaVersion: gpuVendor ? (await getMaxCudaVersion()) ?? '' : '',
-    cudaCapability: gpuVendor ? (await getCudaCapability()) ?? '' : '',
-    gpuVram: graphicsData.controllers.reduce(
-      (sum, item) => sum + (item.vram ?? 0),
-      0,
-    ),
-    platform: process.platform,
-    osArch: arch(),
-    cpuModel: cpuData.manufacturer
-      ? `${cpuData.manufacturer} ${cpuData.brand}`.trim()
-      : cpuData.brand,
-    cpuCores: cpuData.cores,
-    processors: cpuData.processors,
-    memoryTotal: memData.total,
-  };
-};
 
 ipcMain.handle(IpcChannels.getSystemInfo, async (_event, force = false) => {
   const cached = readConfig().systemInfo;
@@ -132,34 +105,82 @@ ipcMain.handle(IpcChannels.modelsCacheRead, () => {
   return readModelsCache();
 });
 
-/**
- * Runs `nvidia-smi` and extracts the max CUDA version the current GPU supports
- * from the header line (e.g. "CUDA Version: 12.4"). Returns null when
- * nvidia-smi is unavailable or the version cannot be parsed.
- */
-const getMaxCudaVersion = async (): Promise<string | null> => {
-  try {
-    const { stdout } = await execFileAsync('nvidia-smi');
-    const match = stdout.match(/CUDA (?:UMD )?Version:\s*(\d+\.\d+)/);
-    return match ? match[1] : null;
-  } catch {
-    return null;
+ipcMain.handle(IpcChannels.localModelsRead, () => {
+  const modelFolder = readConfig().modelFolder;
+  if (!modelFolder) {
+    return [];
   }
-};
-
-const getCudaCapability = async (): Promise<string | null> => {
-  try {
-    const { stdout } = await execFileAsync('nvidia-smi', [
-      '--query-gpu=compute_cap',
-      '--format=csv,noheader',
-    ]);
-    const value = stdout.trim().split('\n')[0]?.trim();
-    return value && value.toLowerCase() !== 'n/a' ? value : null;
-  } catch {
-    return null;
+  const configPath = path.join(modelFolder, 'config.json');
+  if (!fs.existsSync(configPath)) {
+    return [];
   }
-};
+  try {
+    const config = JSON.parse(
+      fs.readFileSync(configPath, 'utf-8'),
+    ) as Record<string, unknown>;
+    if (Array.isArray(config.localModels) && config.localModels.length > 0) {
+      return config.localModels;
+    }
+    return Array.isArray(config.downloads) ? config.downloads : [];
+  } catch {
+    return [];
+  }
+});
 
+ipcMain.handle(IpcChannels.scanLocalModels, () => {
+  return scanLocalModels();
+});
+
+ipcMain.handle(
+  IpcChannels.launcherVersionsFilter,
+  (_event, params) => {
+    return fetchLauncherVersionsFilter(params);
+  },
+);
+
+ipcMain.handle(
+  IpcChannels.prepareDownload,
+  (_event, params: PrepareDownloadParams) => {
+    return prepareDownload(params);
+  },
+);
+
+ipcMain.handle(
+  IpcChannels.startDownload,
+  async (event, items: DownloadItem[]) => {
+    const controller = new AbortController();
+    const targets = items.map((item) => path.join(item.targetDir, item.fileName));
+    downloadSession = { controller, targets };
+    const sendProgress = (payload: DownloadProgressPayload) => {
+      if (!event.sender.isDestroyed()) {
+        event.sender.send(IpcChannels.downloadProgress, payload);
+      }
+    };
+    try {
+      await startDownload(items, sendProgress, controller.signal);
+      // 下载完成后复用“本地模型”tab 的刷新逻辑重新扫描并写回 config.json。
+      await scanLocalModels();
+    } catch (err) {
+      if (controller.signal.aborted) {
+        // 取消时删除本次会话已下载与未下载完成的文件。
+        for (const target of targets) {
+          fs.rmSync(target, { force: true });
+          for (let i = 0; i < 15; i++) {
+            fs.rmSync(`${target}.part${i}`, { force: true });
+          }
+        }
+        throw new Error('下载已取消');
+      }
+      throw err;
+    } finally {
+      downloadSession = null;
+    }
+  },
+);
+
+ipcMain.handle(IpcChannels.cancelDownload, () => {
+  downloadSession?.controller.abort();
+});
 
 ipcMain.handle(IpcChannels.selectFolder, async () => {
   const win = BrowserWindow.getAllWindows()[0];

@@ -2,13 +2,15 @@ import { readConfig, updateConfig } from './config';
 import type {
   Account,
   AuthSession,
+  LauncherVersion,
+  LauncherVersionFilterParams,
   ModelsPagedParams,
   ModelsPagedResult,
   RegisterPayload,
 } from './ipc';
 
 const DEFAULT_BASE_URL = 'http://localhost:3000';
-const CONNECTION_ERROR = '无法连接服务器，请确认接口服务已启动后重试';
+const CONNECTION_ERROR = '无法连接服务器，请确认网络连接后重试';
 
 export const getBaseUrl = (): string =>
   readConfig().apiBaseUrl ?? DEFAULT_BASE_URL;
@@ -164,7 +166,7 @@ export const fetchModelsPaged = async (
 ): Promise<ModelsPagedResult> => {
   const token = getToken();
   if (!token) {
-    throw new Error('请先登录后再获取模型');
+    throw new Error('获取最新可用模型需要先登录');
   }
   const query = new URLSearchParams();
   query.set('page', String(params.page ?? 1));
@@ -185,4 +187,36 @@ export const fetchModelsPaged = async (
       404: '未找到模型数据',
     }, '获取模型列表失败，请稍后重试');
   });
+};
+
+export const fetchLauncherVersionsFilter = async (
+  params: LauncherVersionFilterParams,
+): Promise<LauncherVersion[]> => {
+  const token = getToken();
+  if (!token) {
+    throw new Error('请先登录后再获取启动器版本');
+  }
+  const query = new URLSearchParams();
+  for (const [key, value] of Object.entries(params)) {
+    if (value != null) {
+      query.set(key, String(value));
+    }
+  }
+  const url = `/launcher-versions/filter?${query.toString()}`;
+  // console.log(`[launcher-versions/filter] 请求参数:`, params);
+  const data = await request<unknown>(
+    url,
+    {},
+    token,
+  ).catch((err: unknown) => {
+    console.error(`[launcher-versions/filter] 请求失败 ${url}`, err);
+    throw toFriendlyError(err, {
+      401: '登录已失效，请先登录',
+    }, '获取启动器版本失败，请稍后重试');
+  });
+  // console.log(`[launcher-versions/filter] 响应:`, data);
+  if (Array.isArray(data)) {
+    return data as LauncherVersion[];
+  }
+  return [];
 };

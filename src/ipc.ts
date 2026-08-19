@@ -13,6 +13,13 @@ export const IpcChannels = {
   authRegister: 'ipc:auth-register',
   modelsPaged: 'ipc:models-paged',
   modelsCacheRead: 'ipc:models-cache-read',
+  launcherVersionsFilter: 'ipc:launcher-versions-filter',
+  prepareDownload: 'ipc:prepare-download',
+  startDownload: 'ipc:start-download',
+  downloadProgress: 'ipc:download-progress',
+  cancelDownload: 'ipc:cancel-download',
+  localModelsRead: 'ipc:local-models-read',
+  scanLocalModels: 'ipc:scan-local-models',
 } as const;
 
 export interface AppInfo {
@@ -154,6 +161,73 @@ export interface AppConfig {
   auth?: AuthSession;
 }
 
+export interface LauncherVersion {
+  id: number;
+  name: string;
+  version?: string;
+  platform?: number;
+  osArch?: number;
+  gpu?: number;
+  cuda?: string | number;
+  launcherId: number;
+  downloadAddress?: string;
+  extraDownloadAddress?: string;
+}
+
+export interface LauncherVersionFilterParams {
+  launcherId?: number;
+  platform?: number;
+  osArch?: number;
+  gpu?: number;
+  cuda?: number;
+}
+
+export interface DownloadItem {
+  url: string;
+  fileName: string;
+  targetDir: string;
+  /** 文件大小（字节），已知时才用于判断是否启用分片多线程下载 */
+  size?: number;
+}
+
+export interface PrepareDownloadParams {
+  model: Model;
+  weightFile: WeightFile;
+}
+
+export interface PrepareDownloadResult {
+  items: DownloadItem[];
+  launcherVersion: LauncherVersion;
+}
+
+export interface DownloadProgressPayload {
+  fileName: string;
+  index: number;
+  totalItems: number;
+  received: number;
+  total: number;
+  percent: number;
+  done: boolean;
+  error?: string;
+}
+
+/** modelFolder/config.json 里 downloads 数组中的一条下载记录。 */
+export interface LocalDownloadRecord {
+  /** 唯一标识：`${modelId}-${weightId}` */
+  id: string;
+  downloadedAt: string;
+  launcherId: number;
+  launcherName: string;
+  launcherVersionId: number;
+  launcherVersionName: string;
+  modelId: number;
+  modelName: string;
+  modelType?: number;
+  weightId: number;
+  weightName: string;
+  files: { url: string; name: string; path: string }[];
+}
+
 export interface NaodaiApi {
   ping: (message: string) => Promise<string>;
   getAppInfo: () => Promise<AppInfo>;
@@ -168,5 +242,16 @@ export interface NaodaiApi {
   register: (payload: RegisterPayload) => Promise<void>;
   fetchModelsPaged: (params: ModelsPagedParams) => Promise<ModelsPagedResult>;
   readModelsCache: () => Promise<ModelsPagedResult | null>;
+  fetchLauncherVersionsFilter: (
+    params: LauncherVersionFilterParams,
+  ) => Promise<LauncherVersion[]>;
+  prepareDownload: (params: PrepareDownloadParams) => Promise<PrepareDownloadResult>;
+  startDownload: (items: DownloadItem[]) => Promise<void>;
+  cancelDownload: () => Promise<void>;
+  readLocalModels: () => Promise<LocalDownloadRecord[]>;
+  scanLocalModels: () => Promise<LocalDownloadRecord[]>;
+  onDownloadProgress: (
+    listener: (payload: DownloadProgressPayload) => void,
+  ) => () => void;
   onPush: (listener: (payload: PushPayload) => void) => () => void;
 }

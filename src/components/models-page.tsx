@@ -1,5 +1,6 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
+  Check,
   ChevronRight,
   HardDrive,
   Cloud,
@@ -15,9 +16,20 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from '@/components/ui/tooltip';
-import type { Model, SystemInfo, WeightedModel } from '@/ipc';
+import {
+  DownloadDialog,
+  DownloadProgressBar,
+  type DownloadState,
+} from '@/components/download-dialog';
+import type {
+  LocalDownloadRecord,
+  Model,
+  SystemInfo,
+  WeightedModel,
+  WeightFile,
+} from '@/ipc';
 import type { ModelsCatalog } from '@/lib/models-store';
-import { cn } from '@/lib/utils';
+import { cn, formatErrorMessage } from '@/lib/utils';
 
 const tabs = [
   { value: 'local', label: '本地模型', icon: HardDrive, description: '本地可运行模型' },
@@ -151,10 +163,162 @@ export function ModelsPage({
   systemInfo: SystemInfo | null;
 }) {
   const [activeTab, setActiveTab] = useState('local');
+  const [download, setDownload] = useState<DownloadState>({
+    phase: 'idle',
+    error: null,
+    message: null,
+    items: [],
+    launcherVersion: null,
+    progress: {},
+  });
+  const [localModels, setLocalModels] = useState<LocalDownloadRecord[]>([]);
+  const [localScanning, setLocalScanning] = useState(false);
+  const [speeds, setSpeeds] = useState<Record<string, number>>({});
+  const speedRef = useRef<Record<string, { received: number; time: number }>>({});
+  const cancelRequestedRef = useRef(false);
+  const [backgrounded, setBackgrounded] = useState(false);
   const vramBytes =
     systemInfo && systemInfo.gpuVram > 0
       ? systemInfo.gpuVram * 1024 * 1024
       : null;
+
+  useEffect(() => {
+    window.api.readLocalModels().then((records) => {
+      setLocalModels(records);
+    });
+  }, []);
+
+  useEffect(() => {
+    const unsubscribe = window.api.onDownloadProgress((payload) => {
+      setDownload((prev) => ({
+        ...prev,
+        progress: { ...prev.progress, [payload.fileName]: payload },
+      }));
+      const prevPoint = speedRef.current[payload.fileName];
+      const now = Date.now();
+      if (
+        prevPoint &&
+        now - prevPoint.time >= 200 &&
+        payload.received >= prevPoint.received
+      ) {
+        const dt = (now - prevPoint.time) / 1000;
+        if (dt > 0) {
+          const speed = (payload.received - prevPoint.received) / dt;
+          setSpeeds((prevSpeeds) => ({
+            ...prevSpeeds,
+            [payload.fileName]: speed,
+          }));
+        }
+      }
+      speedRef.current[payload.fileName] = {
+        received: payload.received,
+        time: now,
+      };
+    });
+    return unsubscribe;
+  }, []);
+
+  const handleDownloadClick = async (
+    model: Model,
+    weightFile: WeightFile,
+  ) => {
+    cancelRequestedRef.current = false;
+    setBackgrounded(false);
+    setDownload({
+      phase: 'preparing',
+      error: null,
+      message: null,
+      items: [],
+      launcherVersion: null,
+      progress: {},
+    });
+    try {
+      const result = await window.api.prepareDownload({ model, weightFile });
+      if (result.items.length === 0) {
+        setDownload({
+          phase: 'done',
+          error: null,
+          message: '所有文件已就绪，无需下载',
+          items: [],
+          launcherVersion: result.launcherVersion,
+          progress: {},
+        });
+        return;
+      }
+      setDownload({
+        phase: 'confirm',
+        error: null,
+        message: null,
+        items: result.items,
+        launcherVersion: result.launcherVersion,
+        progress: {},
+      });
+    } catch (err) {
+      setDownload({
+        phase: 'error',
+        error: formatErrorMessage(err, '准备下载失败'),
+        message: null,
+        items: [],
+        launcherVersion: null,
+        progress: {},
+      });
+    }
+  };
+
+  const handleCancelDownload = async () => {
+    if (download.phase === 'downloading') {
+      cancelRequestedRef.current = true;
+      try {
+        await window.api.cancelDownload();
+      } catch {
+        // 忽略取消请求本身的错误
+      }
+    }
+    setBackgrounded(false);
+    setDownload({
+      phase: 'idle',
+      error: null,
+      message: null,
+      items: [],
+      launcherVersion: null,
+      progress: {},
+    });
+  };
+
+  const handleConfirmDownload = async () => {
+    cancelRequestedRef.current = false;
+    setDownload((prev) => ({ ...prev, phase: 'downloading', progress: {} }));
+    try {
+      await window.api.startDownload(download.items);
+      setDownload((prev) => ({ ...prev, phase: 'done', message: '下载完成' }));
+      window.api.readLocalModels().then(setLocalModels);
+    } catch (err) {
+      if (cancelRequestedRef.current) {
+        return;
+      }
+      setDownload((prev) => ({
+        ...prev,
+        phase: 'error',
+        error: formatErrorMessage(err, '下载失败'),
+      }));
+    }
+  };
+
+  const handleRefresh = async () => {
+    if (activeTab !== 'local') {
+      models.refresh();
+      return;
+    }
+    setLocalScanning(true);
+    try {
+      const records = await window.api.scanLocalModels();
+      setLocalModels(records);
+    } catch {
+      setLocalModels([]);
+    } finally {
+      setLocalScanning(false);
+    }
+  };
 
   return (
     <div className="flex w-full flex-1 flex-col">
@@ -190,22 +354,30 @@ export function ModelsPage({
           <Button
             variant="outline"
             size="icon"
-            title="刷新"
-            onClick={models.refresh}
-            className={cn('w-6 h-6', models.loading ? 'animate-spin' : '')}
+            title={activeTab === 'local' ? '扫描本地模型' : '刷新'}
+            onClick={handleRefresh}
+            className={cn(
+              'w-6 h-6',
+              (models.loading || localScanning) ? 'animate-spin' : '',
+            )}
           >
-            <RefreshCw className={models.loading ? 'animate-spin' : ''} />
+            <RefreshCw
+              className={models.loading || localScanning ? 'animate-spin' : ''}
+            />
           </Button>
         </div>
 
         <TabsContent value="local">
-          <p className="py-8 text-center text-sm text-muted-foreground">
-            本地模型开发中…
-          </p>
+          <LocalModels records={localModels} />
         </TabsContent>
 
         <TabsContent value="optional" className="mt-4">
-          <OptionalModels models={models} vramBytes={vramBytes} />
+          <OptionalModels
+            models={models}
+            vramBytes={vramBytes}
+            localRecords={localModels}
+            onDownloadClick={handleDownloadClick}
+          />
         </TabsContent>
 
         <TabsContent value="remote">
@@ -214,16 +386,145 @@ export function ModelsPage({
           </p>
         </TabsContent>
       </Tabs>
+
+      <DownloadDialog
+        download={download}
+        speeds={speeds}
+        backgrounded={backgrounded}
+        onCancel={handleCancelDownload}
+        onConfirm={handleConfirmDownload}
+        onBackground={() => setBackgrounded(true)}
+      />
+
+      {backgrounded && (
+        <DownloadProgressBar
+          download={download}
+          speeds={speeds}
+          onExpand={() => setBackgrounded(false)}
+          onCancel={handleCancelDownload}
+        />
+      )}
     </div>
   );
 }
 
+function LocalModels({ records }: { records: LocalDownloadRecord[] }) {
+  if (records.length === 0) {
+    return (
+      <p className="py-8 text-center text-sm text-muted-foreground">
+        暂无本地模型，去“可选模型”下载后会自动出现在这里
+      </p>
+    );
+  }
+
+  const groups = groupLocalModels(records);
+
+  return (
+    <div className="flex flex-col gap-3">
+      {groups.map((group) => (
+        <div
+          key={group.modelId}
+          className="flex flex-col gap-2 rounded-md border border-border bg-card p-4"
+        >
+          <div className="flex items-start justify-between gap-2">
+            <div className="min-w-0">
+              <h3 className="truncate text-sm font-medium">{group.modelName}</h3>
+              <p className="mt-0.5 text-xs text-muted-foreground">
+                启动器：{group.launcherName}
+                {group.launcherVersionName &&
+                  `（版本 ${group.launcherVersionName}）`}
+              </p>
+            </div>
+            <span className="shrink-0 text-[10px] text-muted-foreground">
+              {group.modelType === undefined
+                ? '未知类型'
+                : typeLabel(group.modelType)}
+            </span>
+          </div>
+          <div className="flex flex-col gap-2">
+            {group.records.map((record) => (
+              <div
+                key={`${record.modelId}-${record.weightId}`}
+                className="flex flex-col gap-1 rounded border border-border p-2"
+              >
+                <div className="flex items-center justify-between gap-2">
+                  <span
+                    className="min-w-0 truncate text-xs font-medium"
+                    title={record.weightName}
+                  >
+                    {record.weightName}
+                  </span>
+                </div>
+                <ul className="flex flex-col gap-0.5">
+                  {record.files.map((file) => (
+                    <li
+                      key={`${file.path}-${file.name}`}
+                      className="truncate text-[11px] text-muted-foreground"
+                      title={file.path}
+                    >
+                      {file.name}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            ))}
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+interface LocalModelGroup {
+  modelId: number;
+  modelName: string;
+  launcherName: string;
+  launcherVersionName: string;
+  latestDownloadedAt: string;
+  modelType?: number;
+  records: LocalDownloadRecord[];
+}
+
+const groupLocalModels = (records: LocalDownloadRecord[]): LocalModelGroup[] => {
+  const map = new Map<number, LocalModelGroup>();
+  for (const record of records) {
+    let group = map.get(record.modelId);
+    if (!group) {
+      group = {
+        modelId: record.modelId,
+        modelName: record.modelName,
+        launcherName: record.launcherName,
+        launcherVersionName: record.launcherVersionName,
+        latestDownloadedAt: record.downloadedAt,
+        modelType: record.modelType,
+        records: [],
+      };
+      map.set(record.modelId, group);
+    }
+    group.records.push(record);
+    if (record.launcherName) {
+      group.launcherName = record.launcherName;
+    }
+    if (record.launcherVersionName) {
+      group.launcherVersionName = record.launcherVersionName;
+    }
+    if (record.downloadedAt > group.latestDownloadedAt) {
+      group.latestDownloadedAt = record.downloadedAt;
+    }
+  }
+  return Array.from(map.values());
+};
+
 function OptionalModels({
   models,
   vramBytes,
+  localRecords,
+  onDownloadClick,
 }: {
   models: ModelsCatalog;
   vramBytes: number | null;
+  localRecords: LocalDownloadRecord[];
+  onDownloadClick: (model: Model, weightFile: WeightFile) => void;
 }) {
   const currentPage = models.result?.page ?? 1;
   const totalPages = models.result?.totalPages ?? 1;
@@ -273,7 +574,13 @@ function OptionalModels({
         )}
       >
         {models.result?.list.map((model) => (
-          <ModelCard key={model.id} model={model} vramBytes={vramBytes} />
+          <ModelCard
+            key={model.id}
+            model={model}
+            vramBytes={vramBytes}
+            localRecords={localRecords}
+            onDownloadClick={onDownloadClick}
+          />
         ))}
         {!models.loading && models.result && models.result.list.length === 0 && (
           <p className="py-8 text-center text-sm text-muted-foreground">
@@ -310,9 +617,13 @@ function OptionalModels({
 function ModelCard({
   model,
   vramBytes,
+  localRecords,
+  onDownloadClick,
 }: {
   model: Model;
   vramBytes: number | null;
+  localRecords: LocalDownloadRecord[];
+  onDownloadClick: (model: Model, weightFile: WeightFile) => void;
 }) {
   const groups = groupQuantized(model.quantizedModels);
   const [openGroups, setOpenGroups] = useState<Record<string, boolean>>(() => {
@@ -376,7 +687,7 @@ function ModelCard({
       </div>
 
       {relationParts.length > 0 && (
-        <p className="text-xs text-muted-foreground">
+        <p className="-mt-2.25 text-xs text-muted-foreground">
           {relationParts.join(' · ')}
         </p>
       )}
@@ -413,27 +724,49 @@ function ModelCard({
                 </button>
                 {isOpen && (
                   <div className="flex flex-wrap gap-2 pl-5">
-                    {group.items.map((item) => (
-                      <span
-                        key={item.weightFile.id}
-                        title={`${item.weightFile.name} · ${formatGb(item.weightFile.size)}`}
-                        className={cn(
-                          'rounded-md border px-2 py-1 text-xs',
-                          fitClasses(
-                            vramFit(
-                              sizeToBytes(item.weightFile.size),
-                              vramBytes,
-                            ),
-                          ),
-                        )}
-                      >
-                        {quantLabel(
-                          item.weightFile.name,
-                          model.name,
-                          item.weightFile.qbit,
-                        )}
-                      </span>
-                    ))}
+                    {group.items.map((item) => {
+                      const isLocal = localRecords.some(
+                        (record) =>
+                          record.modelId === model.id &&
+                          (record.weightId === item.weightFile.id ||
+                            record.weightName === item.weightFile.name),
+                      );
+                      return (
+                        <div
+                          key={item.weightFile.id}
+                          className="relative"
+                        >
+                          <button
+                            type="button"
+                            title={`${item.weightFile.name} · ${formatGb(item.weightFile.size)} · 点击下载`}
+                            onClick={() => onDownloadClick(model, item.weightFile)}
+                            className={cn(
+                              'rounded-md border px-2 py-1 text-xs transition-transform hover:scale-105',
+                              fitClasses(
+                                vramFit(
+                                  sizeToBytes(item.weightFile.size),
+                                  vramBytes,
+                                ),
+                              ),
+                            )}
+                          >
+                            {quantLabel(
+                              item.weightFile.name,
+                              model.name,
+                              item.weightFile.qbit,
+                            )}
+                          </button>
+                          {isLocal && (
+                            <span
+                              className="absolute -right-1.5 -top-1.5 flex size-4 items-center justify-center rounded-full bg-emerald-500 text-white"
+                              title="已下载"
+                            >
+                              <Check className="size-3" />
+                            </span>
+                          )}
+                        </div>
+                      );
+                    })}
                   </div>
                 )}
               </div>

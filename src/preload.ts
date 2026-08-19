@@ -2,6 +2,7 @@ import { contextBridge, ipcRenderer } from 'electron';
 import type { IpcRendererEvent } from 'electron';
 import {
   IpcChannels,
+  type DownloadProgressPayload,
   type NaodaiApi,
   type PushPayload,
 } from './ipc';
@@ -24,6 +25,27 @@ const api: NaodaiApi = {
   fetchModelsPaged: (params) =>
     ipcRenderer.invoke(IpcChannels.modelsPaged, params),
   readModelsCache: () => ipcRenderer.invoke(IpcChannels.modelsCacheRead),
+  fetchLauncherVersionsFilter: (params) =>
+    ipcRenderer.invoke(IpcChannels.launcherVersionsFilter, params),
+  prepareDownload: (params) =>
+    ipcRenderer.invoke(IpcChannels.prepareDownload, params),
+  startDownload: (items) =>
+    ipcRenderer.invoke(IpcChannels.startDownload, items),
+  cancelDownload: () => ipcRenderer.invoke(IpcChannels.cancelDownload),
+  readLocalModels: () => ipcRenderer.invoke(IpcChannels.localModelsRead),
+  scanLocalModels: () => ipcRenderer.invoke(IpcChannels.scanLocalModels),
+  onDownloadProgress: (listener) => {
+    const handler = (
+      _event: IpcRendererEvent,
+      payload: DownloadProgressPayload,
+    ) => {
+      listener(payload);
+    };
+    ipcRenderer.on(IpcChannels.downloadProgress, handler);
+    return () => {
+      ipcRenderer.removeListener(IpcChannels.downloadProgress, handler);
+    };
+  },
   onPush: (listener) => {
     const handler = (_event: IpcRendererEvent, payload: PushPayload) => {
       listener(payload);
