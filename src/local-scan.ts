@@ -7,6 +7,7 @@ import { querySystemInfo } from './system-info';
 import { mapGpu, mapOsArch, mapPlatform, parseIntCuda } from './download';
 import type {
   LocalDownloadRecord,
+  LocalFileKind,
   Model,
   WeightedModel,
   WeightFile,
@@ -83,26 +84,31 @@ const collectFiles = (
   weightName: string,
 ): LocalDownloadRecord['files'] => {
   const out: LocalDownloadRecord['files'] = [];
-  const push = (wf: WeightFile | undefined) => {
+  const push = (wf: WeightFile | undefined, type: LocalFileKind) => {
     if (!wf) {
       return;
     }
     const filePath = path.join(qorDir, wf.name);
     if (fs.existsSync(filePath)) {
-      out.push({ url: wf.downloadAddress ?? '', name: wf.name, path: filePath });
+      out.push({
+        url: wf.downloadAddress ?? '',
+        name: wf.name,
+        path: filePath,
+        type,
+      });
     }
   };
   // 仅包含与 weightName 一致的量化权重文件，以及 mmprojs、draft 文件。
   (model.quantizedModels ?? []).forEach((item) => {
     if (item.weightFile?.name === weightName) {
-      push(item.weightFile);
+      push(item.weightFile, 'quantized');
     }
   });
   if (isTrue(model.hasMmproj)) {
-    (model.mmprojs ?? []).forEach((item) => push(item.weightFile));
+    (model.mmprojs ?? []).forEach((item) => push(item.weightFile, 'mmproj'));
   }
   if (isTrue(model.hasDraft)) {
-    (model.draftModels ?? []).forEach((item) => push(item.weightFile));
+    (model.draftModels ?? []).forEach((item) => push(item.weightFile, 'draft'));
   }
   return out;
 };
@@ -198,9 +204,11 @@ export const scanLocalModels = async (): Promise<LocalDownloadRecord[]> => {
         launcherName: model.launcher?.name ?? '',
         launcherVersionId: 0,
         launcherVersionName,
+        launcherPath: path.join(modelFolder, 'binary', launcherVersionName),
         modelId: model.id,
         modelName: model.name,
         modelType: model.type,
+        contextWindows: model.contextWindows,
         weightId: wf.id,
         weightName: wf.name,
         files: collectFiles(model, qorDir, wf.name),

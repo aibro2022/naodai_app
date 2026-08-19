@@ -1,6 +1,8 @@
 import { app, BrowserWindow, ipcMain, Tray, Menu, nativeImage, dialog } from 'electron';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
+import { spawn, type ChildProcess } from 'node:child_process';
 import started from 'electron-squirrel-startup';
 import {
   IpcChannels,
@@ -10,6 +12,8 @@ import {
   type ModelsPagedParams,
   type PrepareDownloadParams,
   type RegisterPayload,
+  type RunModelParams,
+  type RunModelResult,
 } from './ipc';
 import { readConfig, updateConfig, ensureConfigFile } from './config';
 import {
@@ -35,6 +39,15 @@ let tray: Tray | null = null;
 let isQuitting = false;
 let downloadSession: { controller: AbortController; targets: string[] } | null =
   null;
+const runningModels = new Map<
+  number,
+  {
+    child: ChildProcess;
+    logStream: fs.WriteStream;
+    modelWindow?: BrowserWindow;
+    serverUrl?: string;
+  }
+>();
 
 ipcMain.handle(IpcChannels.ping, (_event, message: string) => {
   return `pong: ${message}`;
@@ -181,6 +194,179 @@ ipcMain.handle(
 ipcMain.handle(IpcChannels.cancelDownload, () => {
   downloadSession?.controller.abort();
 });
+
+ipcMain.handle(
+  IpcChannels.runModel,
+  (_event, params: RunModelParams): RunModelResult => {
+    const {
+      launcherPath,
+      modelPath,
+      mmprojPath,
+      draftPath,
+      context,
+      tools,
+      customParams,
+    } = params;
+    const exe = path.join(
+      launcherPath,
+      `llama-server${process.platform === 'win32' ? '.exe' : ''}`,
+    );
+    if (!fs.existsSync(exe)) {
+      throw new Error(`未找到启动器可执行文件：${exe}`);
+    }
+    const args: string[] = [];
+    args.push('-m', modelPath);
+    if (mmprojPath) {
+      args.push('--mmproj', mmprojPath);
+    }
+    if (draftPath) {
+      args.push('--md', draftPath);
+    }
+    args.push('-c', String(context));
+    if (tools) {
+      args.push('--tools', 'all');
+    }
+    args.push('-ngl', '99', '-ngld', '99');
+    if (customParams?.trim()) {
+      args.push(...customParams.trim().split(/\s+/));
+    }
+
+    const logPath = path.join(os.tmpdir(), `naodai-${Date.now()}.log`);
+    const command = [exe, ...args.map((a) => (/\s/.test(a) ? `"${a}"` : a))].join(
+      ' ',
+    );
+    const logStream = fs.createWriteStream(logPath, { flags: 'a' });
+    logStream.write(`# ${new Date().toISOString()}\n# ${command}\n\n`);
+    const child = spawn(exe, args, {
+      cwd: launcherPath,
+      stdio: ['ignore', 'pipe', 'pipe'],
+      windowsHide: true,
+    });
+    child.stdout.pipe(logStream);
+    child.stderr.pipe(logStream);
+    const closeLog = () => logStream.end();
+    child.on('exit', closeLog);
+    child.on('error', (err) => {
+      logStream.write(`\n[launch error] ${err.message}\n`);
+    });
+    const pid = child.pid ?? -1;
+    const onExit = () => {
+      const entry = runningModels.get(pid);
+      runningModels.delete(pid);
+      stopWaiting();
+      if (entry?.modelWindow && !entry.modelWindow.isDestroyed()) {
+        entry.modelWindow.close();
+      }
+      const windows = BrowserWindow.getAllWindows();
+      for (const win of windows) {
+        if (!win.isDestroyed()) {
+          win.webContents.send(IpcChannels.modelExit, pid);
+        }
+      }
+    };
+    child.on('exit', onExit);
+    child.on('error', onExit);
+    runningModels.set(pid, { child, logStream });
+
+    // 检测到 "listening on http:" 时直接打开最大化的网页窗口，并广播给渲染进程。
+    const stopWaiting = waitForServerUrl(logPath, (url) => {
+      const entry = runningModels.get(pid);
+      if (entry) {
+        entry.serverUrl = url;
+      }
+      openModelWindow(pid);
+      const windows = BrowserWindow.getAllWindows();
+      for (const win of windows) {
+        if (!win.isDestroyed()) {
+          win.webContents.send(IpcChannels.modelReady, { pid, url });
+        }
+      }
+    });
+
+    return { pid, logPath, command };
+  },
+);
+
+ipcMain.handle(IpcChannels.openModelWeb, (_event, pid: number) => {
+  openModelWindow(pid);
+});
+
+const waitForServerUrl = (
+  logPath: string,
+  onFound: (url: string) => void,
+): (() => void) => {
+  const timer = setInterval(() => {
+    let content = '';
+    try {
+      content = fs.readFileSync(logPath, 'utf-8');
+    } catch {
+      return;
+    }
+    const match = content.match(/listening on (http:\/\/\S+)/i);
+    if (match) {
+      const url = match[1].replace(/[,\s)'"]+$/, '');
+      clearInterval(timer);
+      onFound(url);
+    }
+  }, 500);
+  return () => clearInterval(timer);
+};
+
+const openModelWindow = (pid: number): void => {
+  const entry = runningModels.get(pid);
+  if (!entry?.serverUrl) {
+    return;
+  }
+  if (entry.modelWindow && !entry.modelWindow.isDestroyed()) {
+    entry.modelWindow.show();
+    entry.modelWindow.focus();
+    return;
+  }
+  const modelWindow = new BrowserWindow({
+    width: 1280,
+    height: 800,
+    show: false,
+    autoHideMenuBar: true,
+    title: '模型服务',
+  });
+  modelWindow.loadURL(entry.serverUrl);
+  modelWindow.maximize();
+  modelWindow.show();
+  entry.modelWindow = modelWindow;
+};
+
+ipcMain.handle(IpcChannels.stopModel, (_event, pid: number) => {
+  const entry = runningModels.get(pid);
+  if (entry) {
+    entry.child.kill();
+    if (entry.modelWindow && !entry.modelWindow.isDestroyed()) {
+      entry.modelWindow.close();
+    }
+  }
+});
+
+ipcMain.handle(
+  IpcChannels.modelLogRead,
+  (_event, logPath: string, offset: number) => {
+    try {
+      const fd = fs.openSync(logPath, 'r');
+      try {
+        const size = fs.fstatSync(fd).size;
+        if (offset >= size) {
+          return { content: '', endOffset: size };
+        }
+        const length = size - offset;
+        const buffer = Buffer.alloc(length);
+        fs.readSync(fd, buffer, 0, length, offset);
+        return { content: buffer.toString('utf-8'), endOffset: size };
+      } finally {
+        fs.closeSync(fd);
+      }
+    } catch {
+      return { content: '', endOffset: offset };
+    }
+  },
+);
 
 ipcMain.handle(IpcChannels.selectFolder, async () => {
   const win = BrowserWindow.getAllWindows()[0];

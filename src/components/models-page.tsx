@@ -21,6 +21,7 @@ import {
   DownloadProgressBar,
   type DownloadState,
 } from '@/components/download-dialog';
+import { RunDialog, RunStatusBar, type RunSession } from '@/components/run-dialog';
 import type {
   LocalDownloadRecord,
   Model,
@@ -173,6 +174,9 @@ export function ModelsPage({
   });
   const [localModels, setLocalModels] = useState<LocalDownloadRecord[]>([]);
   const [localScanning, setLocalScanning] = useState(false);
+  const [runRecord, setRunRecord] = useState<LocalDownloadRecord | null>(null);
+  const [runBackgrounded, setRunBackgrounded] = useState(false);
+  const [runSession, setRunSession] = useState<RunSession | null>(null);
   const [speeds, setSpeeds] = useState<Record<string, number>>({});
   const speedRef = useRef<Record<string, { received: number; time: number }>>({});
   const cancelRequestedRef = useRef(false);
@@ -304,6 +308,12 @@ export function ModelsPage({
     }
   };
 
+  const handleOpenRun = (record: LocalDownloadRecord) => {
+    setRunRecord(record);
+    setRunBackgrounded(false);
+    setRunSession(null);
+  };
+
   const handleRefresh = async () => {
     if (activeTab !== 'local') {
       models.refresh();
@@ -368,7 +378,7 @@ export function ModelsPage({
         </div>
 
         <TabsContent value="local">
-          <LocalModels records={localModels} />
+          <LocalModels records={localModels} onRun={handleOpenRun} />
         </TabsContent>
 
         <TabsContent value="optional" className="mt-4">
@@ -404,11 +414,47 @@ export function ModelsPage({
           onCancel={handleCancelDownload}
         />
       )}
+
+      <RunDialog
+        record={runRecord}
+        backgrounded={runBackgrounded}
+        onBackground={() => setRunBackgrounded(true)}
+        onClose={() => {
+          setRunRecord(null);
+          setRunBackgrounded(false);
+        }}
+        onSessionChange={setRunSession}
+      />
+
+      {runBackgrounded && runSession && (
+        <RunStatusBar
+          session={runSession}
+          onExpand={() => setRunBackgrounded(false)}
+          onStop={async () => {
+            try {
+              await window.api.stopModel(runSession.pid);
+            } catch {
+              // 忽略停止请求本身的错误
+            }
+          }}
+          onDismiss={() => {
+            setRunSession(null);
+            setRunRecord(null);
+            setRunBackgrounded(false);
+          }}
+        />
+      )}
     </div>
   );
 }
 
-function LocalModels({ records }: { records: LocalDownloadRecord[] }) {
+function LocalModels({
+  records,
+  onRun,
+}: {
+  records: LocalDownloadRecord[];
+  onRun: (record: LocalDownloadRecord) => void;
+}) {
   if (records.length === 0) {
     return (
       <p className="py-8 text-center text-sm text-muted-foreground">
@@ -433,6 +479,7 @@ function LocalModels({ records }: { records: LocalDownloadRecord[] }) {
                 启动器：{group.launcherName}
                 {group.launcherVersionName &&
                   `（版本 ${group.launcherVersionName}）`}
+                {group.launcherPath && ` · 路径：${group.launcherPath}`}
               </p>
             </div>
             <span className="shrink-0 text-[10px] text-muted-foreground">
@@ -466,6 +513,16 @@ function LocalModels({ records }: { records: LocalDownloadRecord[] }) {
                     </li>
                   ))}
                 </ul>
+                <div className="flex justify-end">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="h-6 px-2 text-[11px]"
+                    onClick={() => onRun(record)}
+                  >
+                    运行
+                  </Button>
+                </div>
               </div>
             ))}
           </div>
@@ -482,6 +539,7 @@ interface LocalModelGroup {
   launcherVersionName: string;
   latestDownloadedAt: string;
   modelType?: number;
+  launcherPath?: string;
   records: LocalDownloadRecord[];
 }
 
@@ -497,6 +555,7 @@ const groupLocalModels = (records: LocalDownloadRecord[]): LocalModelGroup[] => 
         launcherVersionName: record.launcherVersionName,
         latestDownloadedAt: record.downloadedAt,
         modelType: record.modelType,
+        launcherPath: record.launcherPath,
         records: [],
       };
       map.set(record.modelId, group);

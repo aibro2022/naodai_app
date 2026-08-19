@@ -18,6 +18,12 @@ export const IpcChannels = {
   startDownload: 'ipc:start-download',
   downloadProgress: 'ipc:download-progress',
   cancelDownload: 'ipc:cancel-download',
+  runModel: 'ipc:run-model',
+  stopModel: 'ipc:stop-model',
+  modelLogRead: 'ipc:model-log-read',
+  modelExit: 'ipc:model-exit',
+  modelReady: 'ipc:model-ready',
+  openModelWeb: 'ipc:open-model-web',
   localModelsRead: 'ipc:local-models-read',
   scanLocalModels: 'ipc:scan-local-models',
 } as const;
@@ -212,6 +218,8 @@ export interface DownloadProgressPayload {
 }
 
 /** modelFolder/config.json 里 downloads 数组中的一条下载记录。 */
+export type LocalFileKind = 'quantized' | 'mmproj' | 'draft';
+
 export interface LocalDownloadRecord {
   /** 唯一标识：`${modelId}-${weightId}` */
   id: string;
@@ -220,12 +228,40 @@ export interface LocalDownloadRecord {
   launcherName: string;
   launcherVersionId: number;
   launcherVersionName: string;
+  launcherPath?: string;
   modelId: number;
   modelName: string;
   modelType?: number;
+  contextWindows?: string;
   weightId: number;
   weightName: string;
-  files: { url: string; name: string; path: string }[];
+  files: { url: string; name: string; path: string; type?: LocalFileKind }[];
+}
+
+export interface RunModelParams {
+  launcherPath: string;
+  modelPath: string;
+  mmprojPath?: string;
+  draftPath?: string;
+  context: number;
+  tools: boolean;
+  customParams?: string;
+}
+
+export interface RunModelResult {
+  pid: number;
+  logPath: string;
+  command: string;
+}
+
+export interface ModelLogChunk {
+  content: string;
+  endOffset: number;
+}
+
+export interface ModelReadyPayload {
+  pid: number;
+  url: string;
 }
 
 export interface NaodaiApi {
@@ -248,6 +284,12 @@ export interface NaodaiApi {
   prepareDownload: (params: PrepareDownloadParams) => Promise<PrepareDownloadResult>;
   startDownload: (items: DownloadItem[]) => Promise<void>;
   cancelDownload: () => Promise<void>;
+  runModel: (params: RunModelParams) => Promise<RunModelResult>;
+  stopModel: (pid: number) => Promise<void>;
+  readModelLog: (logPath: string, offset: number) => Promise<ModelLogChunk>;
+  onModelExit: (listener: (pid: number) => void) => () => void;
+  onModelReady: (listener: (payload: ModelReadyPayload) => void) => () => void;
+  openModelWeb: (pid: number) => Promise<void>;
   readLocalModels: () => Promise<LocalDownloadRecord[]>;
   scanLocalModels: () => Promise<LocalDownloadRecord[]>;
   onDownloadProgress: (
